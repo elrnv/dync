@@ -1,0 +1,11 @@
+[package]
+name = "buffer"
+version = "0.1.0"
+authors = ["Egor Larionov <egor.larionov@gmail.com>"]
+
+[dependencies]
+reinterpret = { path = "src/reinterpret" }
+num-traits = { version = "0.2", optional = true }
+
+[features]
+numeric = ["num-traits"]
