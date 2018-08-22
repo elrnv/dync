@@ -2,7 +2,7 @@
 //! read from standard `Vec`s. `DataBuffer` is particularly useful when dealing
 //! with data whose type is determined at run time.
 
-extern crate reinterpret;
+pub extern crate reinterpret;
 
 use std::{
     any::{Any, TypeId}, mem::size_of, slice,
