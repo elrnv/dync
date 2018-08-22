@@ -4,12 +4,18 @@
 
 pub extern crate reinterpret;
 
+#[cfg(feature = "numeric")]
+extern crate num_traits;
+
 use std::{
     any::{Any, TypeId}, mem::size_of, slice,
 };
 
 #[cfg(feature = "numeric")]
 use std::fmt;
+
+#[cfg(feature = "numeric")]
+use num_traits::{NumCast, Zero, cast};
 
 pub mod macros;
 
@@ -451,7 +457,7 @@ where
 /// Implement pretty printing of numeric `DataBuffer` data.
 impl fmt::Display for DataBuffer {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        call_numeric_buffer_fn!( self.display::<_>(f) or {} );
+        call_numeric_buffer_fn!( self.reinterpret_display::<_>(f) or {} );
         write!(f, "")
     }
 }
