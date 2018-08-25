@@ -12,7 +12,7 @@ readme = "README.md"
 keywords = ["buffer", "io", "data"]
 
 [badges]
-travis-ci = { repository = "https://travis-ci.org/elrnv/buffer", branch = "master" }
+travis-ci = { repository = "elrnv/buffer", branch = "master" }
 
 [dependencies]
 reinterpret = "0.1"
