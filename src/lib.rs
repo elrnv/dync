@@ -58,8 +58,8 @@ impl DataBuffer {
     /// value.
     /// #  Examples
     /// ```
-    /// # extern crate buffer;
-    /// # use buffer::DataBuffer;
+    /// # extern crate data_buffer as buf;
+    /// # use buf::DataBuffer;
     /// # fn main() {
     /// let buf = DataBuffer::with_size(8, 42usize); // Create buffer
     /// let buf_vec: Vec<usize> = buf.into_vec().unwrap(); // Convert into `Vec`
@@ -77,8 +77,8 @@ impl DataBuffer {
     /// given vector.
     /// #  Examples
     /// ```
-    /// # extern crate buffer;
-    /// # use buffer::DataBuffer;
+    /// # extern crate data_buffer as buf;
+    /// # use buf::DataBuffer;
     /// # fn main() {
     /// let vec = vec![1u8, 3, 4, 1, 2];
     /// let buf = DataBuffer::from_vec(vec.clone()); // Convert into buffer
@@ -142,8 +142,8 @@ impl DataBuffer {
     /// a mut reference to the modified buffer is returned.
     /// #  Examples
     /// ```
-    /// # extern crate buffer;
-    /// # use buffer::DataBuffer;
+    /// # extern crate data_buffer as buf;
+    /// # use buf::DataBuffer;
     /// # fn main() {
     /// let vec = vec![1u8, 3, 4, 1, 2];
     /// let mut buf = DataBuffer::from_vec(vec.clone()); // Convert into buffer
@@ -200,8 +200,8 @@ impl DataBuffer {
     /// Returs `None` if the given type `T` doesn't match the internal.
     /// # Examples
     /// ```
-    /// # extern crate buffer;
-    /// # use buffer::DataBuffer;
+    /// # extern crate data_buffer as buf;
+    /// # use buf::DataBuffer;
     /// # fn main() {
     /// let vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
     /// let buf = DataBuffer::from(vec.clone()); // Convert into buffer

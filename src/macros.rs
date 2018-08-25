@@ -7,10 +7,10 @@
 /// macro to call `$fn` with type parameter `u8` like `$fn::<u8>(buffer)`.
 /// # Examples
 /// ```rust
-/// # #[macro_use] extern crate buffer;
+/// # #[macro_use] extern crate data_buffer as buf;
 /// # use std::fmt;
 /// # use std::any::Any;
-/// # use buffer::DataBuffer;
+/// # use buf::DataBuffer;
 /// # fn main() {
 /// // Implement pretty printing of a `DataBuffer` derivative for numeric buffers.
 /// struct MyBuffer(DataBuffer);
