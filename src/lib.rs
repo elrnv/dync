@@ -44,16 +44,6 @@ impl DataBuffer {
         }
     }
 
-    /// Construct a typed `DataBuffer` with a given size.
-    pub fn with_capacity<T: Any>(n: usize) -> Self {
-        let num_bytes = n * size_of::<T>();
-        DataBuffer {
-            data: Vec::with_capacity(num_bytes),
-            length: n,
-            type_id: TypeId::of::<T>(),
-        }
-    }
-
     /// Construct a typed `DataBuffer` with a given size and filled with the specified default
     /// value.
     /// #  Examples
@@ -92,7 +82,6 @@ impl DataBuffer {
         let data = {
             let len_in_bytes = length * size_of::<T>();
             let capacity_in_bytes = vec.capacity() * size_of::<T>();
-            vec.shrink_to_fit();
             let vec_ptr = vec.as_mut_ptr() as *mut u8;
 
             unsafe {
@@ -108,17 +97,17 @@ impl DataBuffer {
         }
     }
 
-    /// Construct a `DataBuffer` from a given slice by copying the data.
+    /// Construct a `DataBuffer` from a given slice by cloning the data.
     #[inline]
-    pub fn from_slice<T: Any>(slice: &[T]) -> Self {
-        let mut buf = DataBuffer::with_capacity::<T>(slice.len());
-        buf.copy_from_slice(slice);
-        buf
+    pub fn from_slice<T: Any + Clone>(slice: &[T]) -> Self {
+        let mut vec = Vec::with_capacity(slice.len());
+        vec.extend_from_slice(slice);
+        Self::from_vec(vec)
     }
 
     /// Copy data from a given slice into the current buffer.
     #[inline]
-    pub fn copy_from_slice<T: Any>(&mut self, slice: &[T]) -> &mut Self {
+    pub fn copy_from_slice<T: Any + Copy>(&mut self, slice: &[T]) -> &mut Self {
         let length = slice.len();
         let bins = length * size_of::<T>();
         let byte_slice = unsafe { slice::from_raw_parts(slice.as_ptr() as *const u8, bins) };
@@ -241,7 +230,7 @@ impl DataBuffer {
     where
         T: Any + Copy,
     {
-        vec.extend(self.as_slice()?);
+        vec.extend(self.iter()?);
         Some(vec)
     }
 
@@ -436,7 +425,7 @@ where
 /// Convert a `&[T]` to a `DataBuffer`.
 impl<'a, T> From<&'a [T]> for DataBuffer
 where
-    T: Any,
+    T: Any + Clone,
 {
     fn from(slice: &'a [T]) -> DataBuffer {
         DataBuffer::from_slice(slice)
@@ -457,7 +446,9 @@ where
 /// Implement pretty printing of numeric `DataBuffer` data.
 impl fmt::Display for DataBuffer {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        call_numeric_buffer_fn!( self.reinterpret_display::<_>(f) or {} );
+        call_numeric_buffer_fn!( self.reinterpret_display::<_>(f) or {
+            println!("Unknown DataBuffer type for pretty printing.");
+        } );
         write!(f, "")
     }
 }
