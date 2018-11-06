@@ -36,11 +36,42 @@ pub struct DataBuffer {
 }
 
 impl DataBuffer {
-    /// Construct an empty `DataBuffer`
+    /// Construct an empty `DataBuffer`.
     #[inline]
     pub fn new() -> Self {
         DataBuffer {
             data: Vec::new(),
+            length: 0,
+            type_id: TypeId::of::<()>(),
+        }
+    }
+
+    /// Construct an empty `DataBuffer` with a specific type.
+    #[inline]
+    pub fn with_type<T: Any>() -> Self {
+        DataBuffer {
+            data: Vec::new(),
+            length: 0,
+            type_id: TypeId::of::<T>(),
+        }
+    }
+
+    /// Construct an empty `DataBuffer` with a capacity for a given number of typed elements. For
+    /// setting byte capacity use `with_byte_capacity`.
+    #[inline]
+    pub fn with_capacity<T: Any>(n: usize) -> Self {
+        DataBuffer {
+            data: Vec::with_capacity(n*size_of::<T>()),
+            length: 0,
+            type_id: TypeId::of::<T>(),
+        }
+    }
+
+    /// Construct an empty `DataBuffer` with a capacity for a given number of bytes.
+    #[inline]
+    pub fn with_byte_capacity(n: usize) -> Self {
+        DataBuffer {
+            data: Vec::with_capacity(n),
             length: 0,
             type_id: TypeId::of::<()>(),
         }
@@ -199,6 +230,12 @@ impl DataBuffer {
     #[inline]
     pub fn len(&self) -> usize {
         self.length
+    }
+
+    /// Get the byte capacity of this buffer.
+    #[inline]
+    pub fn byte_capacity(&self) -> usize {
+        self.data.capacity()
     }
 
     /// Get the size of the element type.
@@ -530,6 +567,36 @@ impl fmt::Display for DataBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test various ways to create a data buffer.
+    #[test]
+    fn initialization_test() {
+        // Empty untyped buffer.
+        let a = DataBuffer::new();
+        assert_eq!(a.len(), 0);
+        assert_eq!(a.bytes_ref().len(), 0);
+        assert_eq!(a.type_id(), TypeId::of::<()>());
+
+        // Empty typed buffer.
+        let a = DataBuffer::with_type::<f32>();
+        assert_eq!(a.len(), 0);
+        assert_eq!(a.bytes_ref().len(), 0);
+        assert_eq!(a.type_id(), TypeId::of::<f32>());
+
+        // Empty typed buffer with a given capacity.
+        let a = DataBuffer::with_capacity::<f32>(4);
+        assert_eq!(a.len(), 0);
+        assert_eq!(a.bytes_ref().len(), 0);
+        assert_eq!(a.byte_capacity(), 4*size_of::<f32>());
+        assert_eq!(a.type_id(), TypeId::of::<f32>());
+
+        // Empty untyped buffer with a given byte capacity.
+        let a = DataBuffer::with_byte_capacity(4);
+        assert_eq!(a.len(), 0);
+        assert_eq!(a.bytes_ref().len(), 0);
+        assert_eq!(a.byte_capacity(), 4);
+        assert_eq!(a.type_id(), TypeId::of::<()>());
+    }
 
     #[test]
     fn data_integrity_u8_test() {
