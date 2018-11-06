@@ -1,6 +1,8 @@
-//! This crate defines a buffer data structure optimized to be written to and
-//! read from standard `Vec`s. `DataBuffer` is particularly useful when dealing
-//! with data whose type is determined at run time.
+//! This crate defines a buffer data structure optimized to be written to and read from standard
+//! `Vec`s. `DataBuffer` is particularly useful when dealing with data whose type is determined at
+//! run time.  Note that data is stored in the underlying byte buffers in native endian form, thus
+//! requesting typed data from a buffer on a platform with different endianness will produce
+//! undefined behavior.
 
 pub extern crate reinterpret;
 
@@ -148,6 +150,20 @@ impl DataBuffer {
         Some(self)
     }
 
+    /// Add an element to this buffer. If the type of the given element coincides with the type
+    /// stored by this buffer, then the modified buffer is returned via a mutable reference.
+    /// Otherwise, `None` is returned.
+    #[inline]
+    pub fn push<T: Any + std::fmt::Debug>(&mut self, element: T) -> Option<&mut Self> {
+        self.check_ref::<T>()?;
+        let element_ref = &element;
+        let element_byte_ptr = element_ref as *const T as *const u8;
+        let element_byte_slice = unsafe {
+            slice::from_raw_parts(element_byte_ptr, size_of::<T>())
+        };
+        self.push_bytes(element_byte_slice)
+    }
+
     /// Check if the current buffer contains elements of the specified type. Returns `Some(self)`
     /// if the type matches and `None` otherwise.
     #[inline]
@@ -217,25 +233,6 @@ impl DataBuffer {
     #[inline]
     pub fn iter_mut<'a, T: Any + 'a>(&'a mut self) -> Option<slice::IterMut<T>> {
         self.as_mut_slice::<T>().map(|x| x.iter_mut())
-    }
-
-    /// Iterate over chunks type sized chunks of bytes without interpreting them. This avoids
-    /// needing to know what type data you're dealing with. This type of iterator is useful for
-    /// transferring data from one place to another for a generic buffer.
-    #[inline]
-    pub fn byte_chunks<'a>(&'a self) -> impl Iterator<Item=&'a [u8]> + 'a {
-        let chunk_size = self.size_of_type();
-        self.data.chunks(chunk_size)
-    }
-
-    /// Mutably iterate over chunks type sized chunks of bytes without interpreting them. This
-    /// avoids needing to know what type data you're dealing with. This type of iterator is useful
-    /// for transferring data from one place to another for a generic buffer, or modifying the
-    /// underlying untyped bytes (e.g. bit twiddling).
-    #[inline]
-    pub fn byte_chunks_mut<'a>(&'a mut self) -> impl Iterator<Item=&'a mut [u8]> + 'a {
-        let chunk_size = self.size_of_type();
-        self.data.chunks_mut(chunk_size)
     }
 
     /// Append cloned items from this buffer to a given `Vec<T>`. Return the mutable reference
@@ -403,6 +400,56 @@ impl DataBuffer {
     #[inline]
     pub fn bytes_mut(&mut self) -> &mut [u8] {
         self.data.as_mut_slice()
+    }
+
+    /// Iterate over chunks type sized chunks of bytes without interpreting them. This avoids
+    /// needing to know what type data you're dealing with. This type of iterator is useful for
+    /// transferring data from one place to another for a generic buffer.
+    #[inline]
+    pub fn byte_chunks<'a>(&'a self) -> impl Iterator<Item=&'a [u8]> + 'a {
+        let chunk_size = self.size_of_type();
+        self.data.chunks(chunk_size)
+    }
+
+    /// Mutably iterate over chunks type sized chunks of bytes without interpreting them. This
+    /// avoids needing to know what type data you're dealing with. This type of iterator is useful
+    /// for transferring data from one place to another for a generic buffer, or modifying the
+    /// underlying untyped bytes (e.g. bit twiddling).
+    #[inline]
+    pub fn byte_chunks_mut<'a>(&'a mut self) -> impl Iterator<Item=&'a mut [u8]> + 'a {
+        let chunk_size = self.size_of_type();
+        self.data.chunks_mut(chunk_size)
+    }
+
+    /// Add bytes to this buffer. If the size of the given slice coincides with the number of bytes
+    /// occupied by the underlying element type, then these bytes are added to the underlying data
+    /// buffer and a mutable reference to the buffer is returned.
+    /// Otherwise, `None` is returned, and the buffer remains unmodified.
+    #[inline]
+    pub fn push_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
+        if bytes.len() == self.size_of_type() { 
+            self.data.extend_from_slice(bytes);
+            self.length += 1;
+            Some(self)
+        } else {
+            None
+        }
+    }
+
+    /// Add bytes to this buffer. If the size of the given slice is a multiple of the number of bytes
+    /// occupied by the underlying element type, then these bytes are added to the underlying data
+    /// buffer and a mutable reference to the buffer is returned.
+    /// Otherwise, `None` is returned and the buffer is unmodified.
+    #[inline]
+    pub fn extend_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
+        let size_of_type = self.size_of_type();
+        if bytes.len() % size_of_type == 0 { 
+            self.data.extend_from_slice(bytes);
+            self.length += bytes.len() / size_of_type;
+            Some(self)
+        } else {
+            None
+        }
     }
 
     /*
@@ -711,6 +758,46 @@ mod tests {
 
         for (i, val) in buf.byte_chunks().enumerate() {
             assert_eq!(reinterpret::reinterpret_slice::<u8, f32>(val)[0], vec_f32[i]);
+        }
+    }
+
+    /// Test pushing values and bytes to a buffer.
+    #[test]
+    fn push_test() {
+        let mut vec_f32 = vec![1.0_f32, 23.0, 0.01];
+        let mut buf = DataBuffer::from(vec_f32.clone()); // Convert into buffer
+        for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
+            assert_eq!(val, vec_f32[i]);
+        }
+
+        vec_f32.push(42.0f32);
+        buf.push(42.0f32).unwrap(); // must provide explicit type
+
+        for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
+            assert_eq!(val, vec_f32[i]);
+        }
+
+        vec_f32.push(11.43);
+        buf.push(11.43f32).unwrap();
+
+        for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
+            assert_eq!(val, vec_f32[i]);
+        }
+
+        // Zero float is always represented by four zero bytes in IEEE format.
+        vec_f32.push(0.0);
+        vec_f32.push(0.0);
+        buf.extend_bytes(&[0,0,0,0, 0,0,0,0]).unwrap();
+
+        for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
+            assert_eq!(val, vec_f32[i]);
+        }
+
+        vec_f32.push(0.0);
+        buf.push_bytes(&[0,0,0,0]).unwrap();
+
+        for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
+            assert_eq!(val, vec_f32[i]);
         }
     }
 }
