@@ -185,6 +185,14 @@ impl DataBuffer {
         self.length
     }
 
+    /// Get the size of the element type.
+    pub fn size_of_type(&self) -> usize {
+        // Check that the length of the buffer is a multiple of the interpreted vector.
+        // This must always be true because of how we build the `DataBuffer`.
+        debug_assert_eq!( self.data.len() % self.length, 0 );
+        self.data.len() / self.length
+    }
+
     /// Return an iterator to a slice representing typed data.
     /// Returs `None` if the given type `T` doesn't match the internal.
     /// # Examples
@@ -209,6 +217,25 @@ impl DataBuffer {
     #[inline]
     pub fn iter_mut<'a, T: Any + 'a>(&'a mut self) -> Option<slice::IterMut<T>> {
         self.as_mut_slice::<T>().map(|x| x.iter_mut())
+    }
+
+    /// Iterate over chunks type sized chunks of bytes without interpreting them. This avoids
+    /// needing to know what type data you're dealing with. This type of iterator is useful for
+    /// transferring data from one place to another for a generic buffer.
+    #[inline]
+    pub fn byte_chunks<'a>(&'a self) -> impl Iterator<Item=&'a [u8]> + 'a {
+        let chunk_size = self.size_of_type();
+        self.data.chunks(chunk_size)
+    }
+
+    /// Mutably iterate over chunks type sized chunks of bytes without interpreting them. This
+    /// avoids needing to know what type data you're dealing with. This type of iterator is useful
+    /// for transferring data from one place to another for a generic buffer, or modifying the
+    /// underlying untyped bytes (e.g. bit twiddling).
+    #[inline]
+    pub fn byte_chunks_mut<'a>(&'a mut self) -> impl Iterator<Item=&'a mut [u8]> + 'a {
+        let chunk_size = self.size_of_type();
+        self.data.chunks_mut(chunk_size)
     }
 
     /// Append cloned items from this buffer to a given `Vec<T>`. Return the mutable reference
@@ -258,7 +285,7 @@ impl DataBuffer {
     /// determine the type `T` automatically.
     #[inline]
     pub fn into_vec<T: Any>(self) -> Option<Vec<T>> {
-        self.check::<T>().map(|x| x.reinterpret_as_vec())
+        self.check::<T>().map(|x| x.reinterpret_into_vec())
     }
 
     /// Convert this buffer into a typed slice.
@@ -338,7 +365,7 @@ impl DataBuffer {
     /// Move buffer data to a vector with a given type, reinterpreting the data type as
     /// required.
     #[inline]
-    pub fn reinterpret_as_vec<T>(self) -> Vec<T> {
+    pub fn reinterpret_into_vec<T>(self) -> Vec<T> {
         reinterpret::reinterpret_vec(self.data)
     }
 
@@ -368,14 +395,14 @@ impl DataBuffer {
 
     /// Peak at the internal representation of the data.
     #[inline]
-    pub fn raw_data(&self) -> &Vec<u8> {
-        &self.data
+    pub fn bytes_ref(&self) -> &[u8] {
+        self.data.as_slice()
     }
 
     /// Get a mutable reference to the internal data representation.
     #[inline]
-    pub fn raw_mut_data(&mut self) -> &mut Vec<u8> {
-        &mut self.data
+    pub fn bytes_mut(&mut self) -> &mut [u8] {
+        self.data.as_mut_slice()
     }
 
     /*
@@ -393,7 +420,7 @@ impl DataBuffer {
                   O: Any + Copy + NumCast + Zero
         {
             debug_assert_eq!(buf.type_id(), TypeId::of::<I>()); // Check invariant.
-            buf.reinterpret_as_vec()
+            buf.reinterpret_into_vec()
                .into_iter()
                .map(|elem: I| cast(elem).unwrap_or(O::zero())).collect()
         }
@@ -646,7 +673,7 @@ mod tests {
         buf2.reinterpret_iter_mut::<u8>().for_each(|val| *val += 1);
 
         let u8_check_vec = vec![2u8, 4, 5, 2, 3, 5, 129, 33];
-        assert_eq!(buf2.reinterpret_as_vec::<u8>(), u8_check_vec);
+        assert_eq!(buf2.reinterpret_into_vec::<u8>(), u8_check_vec);
     }
 
     #[test]
@@ -674,5 +701,16 @@ mod tests {
         assert!(buf.get::<i32>(0).is_none());
         assert!(buf.get_ref::<i32>(1).is_none());
         assert!(buf.get_mut::<i32>(2).is_none());
+    }
+
+    /// Test iterating over chunks of data without having to interpret them.
+    #[test]
+    fn byte_chunks_test() {
+        let vec_f32 = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
+        let buf = DataBuffer::from(vec_f32.clone()); // Convert into buffer
+
+        for (i, val) in buf.byte_chunks().enumerate() {
+            assert_eq!(reinterpret::reinterpret_slice::<u8, f32>(val)[0], vec_f32[i]);
+        }
     }
 }
