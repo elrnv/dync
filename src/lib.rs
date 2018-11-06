@@ -56,6 +56,16 @@ impl DataBuffer {
         }
     }
 
+    /// Construct an empty `DataBuffer` with a specific type given by the type id.
+    #[inline]
+    pub fn with_type_id(id: TypeId) -> Self {
+        DataBuffer {
+            data: Vec::new(),
+            length: 0,
+            type_id: id,
+        }
+    }
+
     /// Construct an empty `DataBuffer` with a capacity for a given number of typed elements. For
     /// setting byte capacity use `with_byte_capacity`.
     #[inline]
@@ -582,6 +592,12 @@ mod tests {
         assert_eq!(a.len(), 0);
         assert_eq!(a.bytes_ref().len(), 0);
         assert_eq!(a.type_id(), TypeId::of::<f32>());
+
+        // Empty buffer typed by the given type id.
+        let a = DataBuffer::with_type_id(TypeId::of::<f64>());
+        assert_eq!(a.len(), 0);
+        assert_eq!(a.bytes_ref().len(), 0);
+        assert_eq!(a.type_id(), TypeId::of::<f64>());
 
         // Empty typed buffer with a given capacity.
         let a = DataBuffer::with_capacity::<f32>(4);
