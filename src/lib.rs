@@ -392,6 +392,22 @@ impl DataBuffer {
         &mut *ptr.offset(i as isize)
     }
 
+    /// Get a `const` reference to the byte slice of the `i`'th element of the buffer.
+    #[inline]
+    pub fn get_bytes(&self, i: usize) -> &[u8] {
+        assert!(i < self.len());
+        let element_size = self.element_size();
+        &self.data[i*element_size..(i+1)*element_size]
+    }
+
+    /// Get a mutable reference to the byte slice of the `i`'th element of the buffer.
+    #[inline]
+    pub fn get_bytes_mut(&mut self, i: usize) -> &mut [u8] {
+        assert!(i < self.len());
+        let element_size = self.element_size();
+        &mut self.data[i*element_size..(i+1)*element_size]
+    }
+
     /// Move buffer data to a vector with a given type, reinterpreting the data type as
     /// required.
     #[inline]
@@ -899,6 +915,12 @@ mod tests {
 
         for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
+        }
+
+        // Test byte getters
+        for i in 5..7 {
+            assert_eq!(buf.get_bytes(i), &[0,0,0,0]);
+            assert_eq!(buf.get_bytes_mut(i), &[0,0,0,0]);
         }
 
         vec_f32.push(0.0);
