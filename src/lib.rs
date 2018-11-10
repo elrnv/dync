@@ -912,8 +912,9 @@ mod tests {
     /// Test appending to a data buffer from other slices and vectors.
     #[test]
     fn extend_append_test() {
-        let mut buf = DataBuffer::with_type::<f32>(); // Convert into buffer
+        let mut buf = DataBuffer::with_type::<f32>(); // Create an empty buffer.
 
+        // Append an ordianry vector of data.
         let vec_f32 = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
         let mut vec_bytes: Vec<u8> = reinterpret::reinterpret_vec(vec_f32.clone());
         buf.append_bytes(&mut vec_bytes);
@@ -924,6 +925,15 @@ mod tests {
 
         buf.clear();
         assert_eq!(buf.len(), 0);
+
+        // Append a temporary vec.
+        buf.append_bytes(&mut vec![0u8; 4]);
+        assert_eq!(buf.get::<f32>(0).unwrap(), 0.0f32);
+
+        buf.clear();
+        assert_eq!(buf.len(), 0);
+
+        // Extend buffer with a slice
         let slice_bytes: &[u8] = reinterpret::reinterpret_slice(&vec_f32);
         buf.extend_bytes(slice_bytes);
 
