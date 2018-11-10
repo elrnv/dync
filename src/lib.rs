@@ -483,6 +483,21 @@ impl DataBuffer {
         }
     }
 
+    /// Move bytes to this buffer. If the size of the given vector is a multiple of the number of bytes
+    /// occupied by the underlying element type, then these bytes are moved to the underlying data
+    /// buffer and a mutable reference to the buffer is returned.
+    /// Otherwise, `None` is returned and both the buffer and the input vector remain unmodified.
+    #[inline]
+    pub fn append_bytes(&mut self, bytes: &mut Vec<u8>) -> Option<&mut Self> {
+        let element_size = self.element_size();
+        if bytes.len() % element_size == 0 { 
+            self.data.append(bytes);
+            Some(self)
+        } else {
+            None
+        }
+    }
+
     /*
      * Methods specific to buffers storing numeric data
      */
@@ -888,6 +903,29 @@ mod tests {
 
         vec_f32.push(0.0);
         buf.push_bytes(&[0,0,0,0]).unwrap();
+
+        for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
+            assert_eq!(val, vec_f32[i]);
+        }
+    }
+
+    /// Test appending to a data buffer from other slices and vectors.
+    #[test]
+    fn extend_append_test() {
+        let mut buf = DataBuffer::with_type::<f32>(); // Convert into buffer
+
+        let vec_f32 = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
+        let mut vec_bytes: Vec<u8> = reinterpret::reinterpret_vec(vec_f32.clone());
+        buf.append_bytes(&mut vec_bytes);
+
+        for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
+            assert_eq!(val, vec_f32[i]);
+        }
+
+        buf.clear();
+        assert_eq!(buf.len(), 0);
+        let slice_bytes: &[u8] = reinterpret::reinterpret_slice(&vec_f32);
+        buf.extend_bytes(slice_bytes);
 
         for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
