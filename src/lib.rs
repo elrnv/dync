@@ -231,6 +231,12 @@ impl DataBuffer {
         self.data.len() / self.element_size // element_size is guaranteed to be strictly positive
     }
 
+    /// Check if there are any elements stored in this buffer.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
     /// Get the byte capacity of this buffer.
     #[inline]
     pub fn byte_capacity(&self) -> usize {
@@ -238,6 +244,7 @@ impl DataBuffer {
     }
 
     /// Get the size of the element type.
+    #[inline]
     pub fn element_size(&self) -> usize {
         self.element_size
     }
@@ -339,7 +346,7 @@ impl DataBuffer {
     pub fn get<T: Any + Copy>(&self, i: usize) -> Option<T> {
         assert!(i < self.len());
         let ptr = self.check_ref::<T>()?.data.as_ptr() as *const T;
-        Some(unsafe { *ptr.offset(i as isize) })
+        Some(unsafe { *ptr.add(i) })
     }
 
     /// Get a `const` reference to the `i`'th element of the buffer.
@@ -347,7 +354,7 @@ impl DataBuffer {
     pub fn get_ref<T: Any>(&self, i: usize) -> Option<&T> {
         assert!(i < self.len());
         let ptr = self.check_ref::<T>()?.data.as_ptr() as *const T;
-        Some(unsafe { &*ptr.offset(i as isize) })
+        Some(unsafe { &*ptr.add(i) })
     }
 
     /// Get a mutable reference to the `i`'th element of the buffer.
@@ -355,7 +362,7 @@ impl DataBuffer {
     pub fn get_mut<T: Any>(&mut self, i: usize) -> Option<&mut T> {
         assert!(i < self.len());
         let ptr = self.check_mut::<T>()?.data.as_mut_ptr() as *mut T;
-        Some(unsafe { &mut *ptr.offset(i as isize) })
+        Some(unsafe { &mut *ptr.add(i) })
     }
 
     /*
@@ -369,7 +376,7 @@ impl DataBuffer {
     #[inline]
     pub unsafe fn get_unchecked<T: Any + Copy>(&self, i: usize) -> T {
         let ptr = self.data.as_ptr() as *const T;
-        *ptr.offset(i as isize)
+        *ptr.add(i)
     }
 
     /// Get a `const` reference to the `i`'th element of the buffer.
@@ -379,7 +386,7 @@ impl DataBuffer {
     #[inline]
     pub unsafe fn get_unchecked_ref<T: Any>(&self, i: usize) -> &T {
         let ptr = self.data.as_ptr() as *const T;
-        &*ptr.offset(i as isize)
+        &*ptr.add(i)
     }
 
     /// Get a mutable reference to the `i`'th element of the buffer.
@@ -389,7 +396,7 @@ impl DataBuffer {
     #[inline]
     pub unsafe fn get_unchecked_mut<T: Any>(&mut self, i: usize) -> &mut T {
         let ptr = self.data.as_mut_ptr() as *mut T;
-        &mut *ptr.offset(i as isize)
+        &mut *ptr.add(i)
     }
 
     /// Get a `const` reference to the byte slice of the `i`'th element of the buffer.
@@ -553,6 +560,7 @@ impl<T> From<Vec<T>> for DataBuffer
 where
     T: Any,
 {
+    #[inline]
     fn from(vec: Vec<T>) -> DataBuffer {
         DataBuffer::from_vec(vec)
     }
@@ -563,6 +571,7 @@ impl<'a, T> From<&'a [T]> for DataBuffer
 where
     T: Any + Clone,
 {
+    #[inline]
     fn from(slice: &'a [T]) -> DataBuffer {
         DataBuffer::from_slice(slice)
     }
@@ -573,6 +582,7 @@ impl<T> Into<Option<Vec<T>>> for DataBuffer
 where
     T: Any + Clone,
 {
+    #[inline]
     fn into(self) -> Option<Vec<T>> {
         self.into_vec()
     }
