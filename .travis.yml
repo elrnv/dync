@@ -4,14 +4,19 @@ rust:
   - nightly
   - beta
   - stable
+ 
+matrix:
+  allow_failures:
+    - rust: nightly
+  fast_finish: true
 
 cache: cargo
 
 script:
-  - cargo build
-  - cargo test
-  - cargo build --features "numeric"
-  - cargo test --features "numeric"
+  - cargo build --verbose
+  - cargo test --verbose
+  - cargo build --features "numeric" --verbose
+  - cargo test --features "numeric" --verbose
 
 notifications:
     email: false
