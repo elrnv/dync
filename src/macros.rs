@@ -33,7 +33,7 @@ macro_rules! call_numeric_buffer_fn {
     ($fn:ident ::<_,$($params:ident),*>( $data:expr, $($args:expr),* ) or $err:block ) => {
         {
             let buf = $data;
-            match buf.type_id() {
+            match buf.element_type_id() {
                 x if x == ::std::any::TypeId::of::<u8>() =>  $fn::<u8,$($params),*> (buf, $($args),*),
                 x if x == ::std::any::TypeId::of::<i8>() =>  $fn::<i8,$($params),*> (buf, $($args),*),
                 x if x == ::std::any::TypeId::of::<u16>() => $fn::<u16,$($params),*>(buf, $($args),*),
@@ -60,7 +60,7 @@ macro_rules! call_numeric_buffer_fn {
     ($data:ident . $fn:ident ::<_,$($params:ident),*>( $($args:expr),* ) or $err:block ) => {
         {
             let buf = $data;
-            match buf.type_id() {
+            match buf.element_type_id() {
                 x if x == ::std::any::TypeId::of::<u8>() =>  buf.$fn::<u8,$($params),*> ($($args),*),
                 x if x == ::std::any::TypeId::of::<i8>() =>  buf.$fn::<i8,$($params),*> ($($args),*),
                 x if x == ::std::any::TypeId::of::<u16>() => buf.$fn::<u16,$($params),*>($($args),*),

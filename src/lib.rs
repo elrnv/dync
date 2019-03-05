@@ -530,7 +530,7 @@ impl DataBuffer {
     pub fn cast_into_vec<T>(self) -> Vec<T>
         where T: Any + Copy + NumCast + Zero
     {
-        // Helper function (generic on the input) to conver the given DataBuffer into Vec.
+        // Helper function (generic on the input) to convert the given DataBuffer into Vec.
         fn convert_into_vec<I,O>(buf: DataBuffer) -> Vec<O>
             where I: Any + NumCast,
                   O: Any + Copy + NumCast + Zero
