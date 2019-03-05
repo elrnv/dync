@@ -197,21 +197,21 @@ impl DataBuffer {
     /// if the type matches and `None` otherwise.
     #[inline]
     pub fn check<T: Any>(self) -> Option<Self> {
-        if TypeId::of::<T>() != self.type_id() { None } else { Some(self) }
+        if TypeId::of::<T>() != self.element_type_id() { None } else { Some(self) }
     }
 
     /// Check if the current buffer contains elements of the specified type. Returns `None` if the
     /// check fails, otherwise a reference to self is returned.
     #[inline]
     pub fn check_ref<T: Any>(&self) -> Option<&Self> {
-        if TypeId::of::<T>() != self.type_id() { None } else { Some(self) }
+        if TypeId::of::<T>() != self.element_type_id() { None } else { Some(self) }
     }
 
     /// Check if the current buffer contains elements of the specified type. Same as `check_ref`
     /// but consumes and produces a mut reference to self.
     #[inline]
-    pub fn check_mut<T: Any>(&mut self) -> Option<&mut Self> {
-        if TypeId::of::<T>() != self.type_id() { None } else { Some(self) }
+    pub fn check_mut<'a, T: Any>(&'a mut self) -> Option<&'a mut Self> {
+        if TypeId::of::<T>() != self.element_type_id() { None } else { Some(self) }
     }
 
     /*
@@ -220,7 +220,7 @@ impl DataBuffer {
 
     /// Get the `TypeId` of data stored within this buffer.
     #[inline]
-    pub fn type_id(&self) -> TypeId {
+    pub fn element_type_id(&self) -> TypeId {
         self.element_type_id
     }
 
@@ -535,7 +535,7 @@ impl DataBuffer {
             where I: Any + NumCast,
                   O: Any + Copy + NumCast + Zero
         {
-            debug_assert_eq!(buf.type_id(), TypeId::of::<I>()); // Check invariant.
+            debug_assert_eq!(buf.element_type_id(), TypeId::of::<I>()); // Check invariant.
             buf.reinterpret_into_vec()
                .into_iter()
                .map(|elem: I| cast(elem).unwrap_or(O::zero())).collect()
@@ -546,7 +546,7 @@ impl DataBuffer {
     #[cfg(feature = "numeric")]
     /// Display the contents of this buffer reinterpreted in the given type.
     fn reinterpret_display<T: Any + fmt::Display>(&self, f: &mut fmt::Formatter) {
-        debug_assert_eq!(self.type_id(), TypeId::of::<T>()); // Check invariant.
+        debug_assert_eq!(self.element_type_id(), TypeId::of::<T>()); // Check invariant.
         for item in self.reinterpret_iter::<T>() {
             write!(f, "{} ", item)
                 .expect("Error occurred while writing an DataBuffer.");
@@ -610,20 +610,20 @@ mod tests {
         let a = DataBuffer::with_type::<f32>();
         assert_eq!(a.len(), 0);
         assert_eq!(a.bytes_ref().len(), 0);
-        assert_eq!(a.type_id(), TypeId::of::<f32>());
+        assert_eq!(a.element_type_id(), TypeId::of::<f32>());
 
         // Empty buffer typed by the given type id.
         let b = DataBuffer::with_buffer_type(&a);
         assert_eq!(b.len(), 0);
         assert_eq!(b.bytes_ref().len(), 0);
-        assert_eq!(b.type_id(), TypeId::of::<f32>());
+        assert_eq!(b.element_type_id(), TypeId::of::<f32>());
 
         // Empty typed buffer with a given capacity.
         let a = DataBuffer::with_capacity::<f32>(4);
         assert_eq!(a.len(), 0);
         assert_eq!(a.bytes_ref().len(), 0);
         assert_eq!(a.byte_capacity(), 4*size_of::<f32>());
-        assert_eq!(a.type_id(), TypeId::of::<f32>());
+        assert_eq!(a.element_type_id(), TypeId::of::<f32>());
     }
 
     #[test]
