@@ -8,10 +8,7 @@
 //!
 //! `DataBuffer` doesn't support zero-sized types.
 
-pub extern crate reinterpret;
-
-#[cfg(feature = "numeric")]
-extern crate num_traits;
+pub use reinterpret;
 
 use std::{
     any::{Any, TypeId}, mem::size_of, slice,
@@ -25,19 +22,43 @@ use num_traits::{NumCast, Zero, cast};
 
 pub mod macros;
 
+#[cfg(feature = "serde")]
+mod serde_helpers {
+    use std::any::TypeId;
+    fn transmute_type_id_to_u64(id: &TypeId) -> u64 {
+        unsafe { std::mem::transmute::<TypeId, u64>(*id) }
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[serde(remote = "TypeId")]
+    pub struct TypeIdDef {
+        #[serde(getter = "transmute_type_id_to_u64")]
+        t: u64,
+    }
+
+    impl From<TypeIdDef> for TypeId {
+        fn from(def: TypeIdDef) -> TypeId {
+            unsafe { std::mem::transmute::<u64, TypeId>(def.t) }
+        }
+    }
+}
+
 /// Buffer of plain old data. The data is stored as an array of bytes (`Vec<u8>`).
 /// `DataBuffer` keeps track of the type stored within via an explicit `TypeId` member. This allows
 /// one to hide the type from the compiler and check it only when necessary. It is particularly
 /// useful when the type of data is determined at runtime (e.g. when parsing numeric data).
 #[derive(Clone, Debug, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DataBuffer {
     /// Raw data stored as an array of bytes.
+    #[cfg_attr(feature = "serde_bytes", serde(with = "serde_bytes"))]
     data: Vec<u8>,
     /// Number of bytes occupied by ana element of this buffer.
     /// Note: We store this instead of length because it gives us the ability to get the type size
     /// when the buffer is empty.
     element_size: usize,
     /// Type encoding for hiding the type of data from the compiler.
+    #[cfg_attr(feature = "serde", serde(with = "serde_helpers::TypeIdDef"))]
     element_type_id: TypeId,
 }
 
@@ -873,7 +894,7 @@ mod tests {
     fn wrong_type_test() {
         let vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
         let mut buf = DataBuffer::from(vec.clone()); // Convert into buffer
-        assert_eq!(vec, buf.clone_into_vec().unwrap());
+        assert_eq!(vec, buf.clone_into_vec::<f32>().unwrap());
 
         assert!(buf.copy_into_vec::<f64>().is_none());
         assert!(buf.as_slice::<f64>().is_none());
@@ -972,5 +993,18 @@ mod tests {
         for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
         }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_test() {
+        let vec_f32 = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
+        let buf = DataBuffer::from(vec_f32.clone()); // Convert into buffer
+        dbg!(&buf);
+        let buf_str = serde_json::to_string(&buf).expect("Failed to serialize DataBuffer.");
+        dbg!(&buf_str);
+        let new_buf = serde_json::from_str(&buf_str).expect("Failed to deserialize DataBuffer.");
+        dbg!(&new_buf);
+        assert_eq!(buf, new_buf);
     }
 }

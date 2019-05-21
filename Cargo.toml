@@ -18,6 +18,14 @@ travis-ci = { repository = "elrnv/buffer", branch = "master" }
 [dependencies]
 reinterpret = "0.1"
 num-traits = { version = "0.2", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_bytes = { version = "0.11", optional = true }
+
+[dev-dependencies]
+serde_json = "1.0"
 
 [features]
 numeric = ["num-traits"]
+serde_all = ["serde", "serde_bytes"]
+
+
