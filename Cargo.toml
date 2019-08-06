@@ -1,6 +1,6 @@
 [package]
 name = "data-buffer"
-version = "0.5.1"
+version = "0.6.0"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 license = "MIT OR Apache-2.0"
 description = "A simple low-level data buffer type useful for IO and in homogeneous collections"
