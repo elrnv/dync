@@ -80,4 +80,3 @@ macro_rules! call_numeric_buffer_fn {
         call_numeric_buffer_fn!($data . $fn ::<_,>( $($args),* ) or $err )
     };
 }
-

@@ -11,14 +11,16 @@
 pub use reinterpret;
 
 use std::{
-    any::{Any, TypeId}, mem::size_of, slice,
+    any::{Any, TypeId},
+    mem::size_of,
+    slice,
 };
 
 #[cfg(feature = "numeric")]
 use std::fmt;
 
 #[cfg(feature = "numeric")]
-use num_traits::{NumCast, Zero, cast};
+use num_traits::{cast, NumCast, Zero};
 
 pub mod macros;
 
@@ -67,7 +69,10 @@ impl DataBuffer {
     #[inline]
     pub fn with_type<T: Any>() -> Self {
         let element_size = size_of::<T>();
-        assert_ne!(element_size, 0, "DataBuffer doesn't support zero sized types.");
+        assert_ne!(
+            element_size, 0,
+            "DataBuffer doesn't support zero sized types."
+        );
         DataBuffer {
             data: Vec::new(),
             element_size,
@@ -90,9 +95,12 @@ impl DataBuffer {
     #[inline]
     pub fn with_capacity<T: Any>(n: usize) -> Self {
         let element_size = size_of::<T>();
-        assert_ne!(element_size, 0, "DataBuffer doesn't support zero sized types.");
+        assert_ne!(
+            element_size, 0,
+            "DataBuffer doesn't support zero sized types."
+        );
         DataBuffer {
-            data: Vec::with_capacity(n*element_size),
+            data: Vec::with_capacity(n * element_size),
             element_size,
             element_type_id: TypeId::of::<T>(),
         }
@@ -130,7 +138,10 @@ impl DataBuffer {
     /// ```
     pub fn from_vec<T: Any>(mut vec: Vec<T>) -> Self {
         let element_size = size_of::<T>();
-        assert_ne!(element_size, 0, "DataBuffer doesn't support zero sized types.");
+        assert_ne!(
+            element_size, 0,
+            "DataBuffer doesn't support zero sized types."
+        );
 
         let data = {
             let len_in_bytes = vec.len() * element_size;
@@ -162,7 +173,10 @@ impl DataBuffer {
     #[inline]
     pub fn copy_from_slice<T: Any + Copy>(&mut self, slice: &[T]) -> &mut Self {
         let element_size = size_of::<T>();
-        assert_ne!(element_size, 0, "DataBuffer doesn't support zero sized types.");
+        assert_ne!(
+            element_size, 0,
+            "DataBuffer doesn't support zero sized types."
+        );
         let bins = slice.len() * element_size;
         let byte_slice = unsafe { slice::from_raw_parts(slice.as_ptr() as *const u8, bins) };
         self.data.resize(bins, 0);
@@ -208,9 +222,7 @@ impl DataBuffer {
         self.check_ref::<T>()?;
         let element_ref = &element;
         let element_byte_ptr = element_ref as *const T as *const u8;
-        let element_byte_slice = unsafe {
-            slice::from_raw_parts(element_byte_ptr, size_of::<T>())
-        };
+        let element_byte_slice = unsafe { slice::from_raw_parts(element_byte_ptr, size_of::<T>()) };
         self.push_bytes(element_byte_slice)
     }
 
@@ -218,21 +230,33 @@ impl DataBuffer {
     /// if the type matches and `None` otherwise.
     #[inline]
     pub fn check<T: Any>(self) -> Option<Self> {
-        if TypeId::of::<T>() != self.element_type_id() { None } else { Some(self) }
+        if TypeId::of::<T>() != self.element_type_id() {
+            None
+        } else {
+            Some(self)
+        }
     }
 
     /// Check if the current buffer contains elements of the specified type. Returns `None` if the
     /// check fails, otherwise a reference to self is returned.
     #[inline]
     pub fn check_ref<T: Any>(&self) -> Option<&Self> {
-        if TypeId::of::<T>() != self.element_type_id() { None } else { Some(self) }
+        if TypeId::of::<T>() != self.element_type_id() {
+            None
+        } else {
+            Some(self)
+        }
     }
 
     /// Check if the current buffer contains elements of the specified type. Same as `check_ref`
     /// but consumes and produces a mut reference to self.
     #[inline]
     pub fn check_mut<'a, T: Any>(&'a mut self) -> Option<&'a mut Self> {
-        if TypeId::of::<T>() != self.element_type_id() { None } else { Some(self) }
+        if TypeId::of::<T>() != self.element_type_id() {
+            None
+        } else {
+            Some(self)
+        }
     }
 
     /*
@@ -425,7 +449,7 @@ impl DataBuffer {
     pub fn get_bytes(&self, i: usize) -> &[u8] {
         assert!(i < self.len());
         let element_size = self.element_size();
-        &self.data[i*element_size..(i+1)*element_size]
+        &self.data[i * element_size..(i + 1) * element_size]
     }
 
     /// Get a mutable reference to the byte slice of the `i`'th element of the buffer.
@@ -433,7 +457,7 @@ impl DataBuffer {
     pub fn get_bytes_mut(&mut self, i: usize) -> &mut [u8] {
         assert!(i < self.len());
         let element_size = self.element_size();
-        &mut self.data[i*element_size..(i+1)*element_size]
+        &mut self.data[i * element_size..(i + 1) * element_size]
     }
 
     /// Move buffer data to a vector with a given type, reinterpreting the data type as
@@ -469,13 +493,13 @@ impl DataBuffer {
 
     /// Peak at the internal representation of the data.
     #[inline]
-    pub fn bytes_ref(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &[u8] {
         self.data.as_slice()
     }
 
     /// Get a mutable reference to the internal data representation.
     #[inline]
-    pub fn bytes_mut(&mut self) -> &mut [u8] {
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         self.data.as_mut_slice()
     }
 
@@ -483,7 +507,7 @@ impl DataBuffer {
     /// needing to know what type data you're dealing with. This type of iterator is useful for
     /// transferring data from one place to another for a generic buffer.
     #[inline]
-    pub fn byte_chunks<'a>(&'a self) -> impl Iterator<Item=&'a [u8]> + 'a {
+    pub fn byte_chunks<'a>(&'a self) -> impl Iterator<Item = &'a [u8]> + 'a {
         let chunk_size = self.element_size();
         self.data.chunks(chunk_size)
     }
@@ -493,7 +517,7 @@ impl DataBuffer {
     /// for transferring data from one place to another for a generic buffer, or modifying the
     /// underlying untyped bytes (e.g. bit twiddling).
     #[inline]
-    pub fn byte_chunks_mut<'a>(&'a mut self) -> impl Iterator<Item=&'a mut [u8]> + 'a {
+    pub fn byte_chunks_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut [u8]> + 'a {
         let chunk_size = self.element_size();
         self.data.chunks_mut(chunk_size)
     }
@@ -504,7 +528,7 @@ impl DataBuffer {
     /// Otherwise, `None` is returned, and the buffer remains unmodified.
     #[inline]
     pub fn push_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
-        if bytes.len() == self.element_size() { 
+        if bytes.len() == self.element_size() {
             self.data.extend_from_slice(bytes);
             Some(self)
         } else {
@@ -519,7 +543,7 @@ impl DataBuffer {
     #[inline]
     pub fn extend_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
         let element_size = self.element_size();
-        if bytes.len() % element_size == 0 { 
+        if bytes.len() % element_size == 0 {
             self.data.extend_from_slice(bytes);
             Some(self)
         } else {
@@ -534,8 +558,19 @@ impl DataBuffer {
     #[inline]
     pub fn append_bytes(&mut self, bytes: &mut Vec<u8>) -> Option<&mut Self> {
         let element_size = self.element_size();
-        if bytes.len() % element_size == 0 { 
+        if bytes.len() % element_size == 0 {
             self.data.append(bytes);
+            Some(self)
+        } else {
+            None
+        }
+    }
+
+    /// Move bytes to this buffer. The given buffer must have the same underlying type as self.
+    #[inline]
+    pub fn append(&mut self, buf: &mut DataBuffer) -> Option<&mut Self> {
+        if buf.element_type_id() == self.element_type_id() {
+            self.data.append(&mut buf.data);
             Some(self)
         } else {
             None
@@ -549,17 +584,20 @@ impl DataBuffer {
     #[cfg(feature = "numeric")]
     /// Cast a numeric `DataBuffer` into the given output `Vec` type.
     pub fn cast_into_vec<T>(self) -> Vec<T>
-        where T: Any + Copy + NumCast + Zero
+    where
+        T: Any + Copy + NumCast + Zero,
     {
         // Helper function (generic on the input) to convert the given DataBuffer into Vec.
-        fn convert_into_vec<I,O>(buf: DataBuffer) -> Vec<O>
-            where I: Any + NumCast,
-                  O: Any + Copy + NumCast + Zero
+        fn convert_into_vec<I, O>(buf: DataBuffer) -> Vec<O>
+        where
+            I: Any + NumCast,
+            O: Any + Copy + NumCast + Zero,
         {
             debug_assert_eq!(buf.element_type_id(), TypeId::of::<I>()); // Check invariant.
             buf.reinterpret_into_vec()
-               .into_iter()
-               .map(|elem: I| cast(elem).unwrap_or(O::zero())).collect()
+                .into_iter()
+                .map(|elem: I| cast(elem).unwrap_or(O::zero()))
+                .collect()
         }
         call_numeric_buffer_fn!( convert_into_vec::<_,T>(self) or { Vec::new() } )
     }
@@ -569,11 +607,9 @@ impl DataBuffer {
     fn reinterpret_display<T: Any + fmt::Display>(&self, f: &mut fmt::Formatter) {
         debug_assert_eq!(self.element_type_id(), TypeId::of::<T>()); // Check invariant.
         for item in self.reinterpret_iter::<T>() {
-            write!(f, "{} ", item)
-                .expect("Error occurred while writing an DataBuffer.");
+            write!(f, "{} ", item).expect("Error occurred while writing an DataBuffer.");
         }
     }
-
 }
 
 /// Convert a `Vec<T>` to a `DataBuffer`.
@@ -630,20 +666,20 @@ mod tests {
         // Empty typed buffer.
         let a = DataBuffer::with_type::<f32>();
         assert_eq!(a.len(), 0);
-        assert_eq!(a.bytes_ref().len(), 0);
+        assert_eq!(a.as_bytes().len(), 0);
         assert_eq!(a.element_type_id(), TypeId::of::<f32>());
 
         // Empty buffer typed by the given type id.
         let b = DataBuffer::with_buffer_type(&a);
         assert_eq!(b.len(), 0);
-        assert_eq!(b.bytes_ref().len(), 0);
+        assert_eq!(b.as_bytes().len(), 0);
         assert_eq!(b.element_type_id(), TypeId::of::<f32>());
 
         // Empty typed buffer with a given capacity.
         let a = DataBuffer::with_capacity::<f32>(4);
         assert_eq!(a.len(), 0);
-        assert_eq!(a.bytes_ref().len(), 0);
-        assert_eq!(a.byte_capacity(), 4*size_of::<f32>());
+        assert_eq!(a.as_bytes().len(), 0);
+        assert_eq!(a.byte_capacity(), 4 * size_of::<f32>());
         assert_eq!(a.element_type_id(), TypeId::of::<f32>());
     }
 
@@ -763,7 +799,7 @@ mod tests {
         let buf = DataBuffer::from(vecf32.clone()); // Convert into buffer
         let nu_vec: Vec<f64> = buf.cast_into_vec(); // Convert back into vec
         for (&a, &b) in vecf64.iter().zip(nu_vec.iter()) {
-            assert!((a - b).abs() < 1e-6f64*f64::max(a,b).abs());
+            assert!((a - b).abs() < 1e-6f64 * f64::max(a, b).abs());
         }
 
         let vecf64 = vec![1f64, -3.1, 100.2, -2.31, 3.2, 4e2, -1e23];
@@ -774,7 +810,7 @@ mod tests {
         let buf = DataBuffer::from(vecf32.clone()); // Convert into buffer
         let nu_vec: Vec<f64> = buf.cast_into_vec(); // Convert back into vec
         for (&a, &b) in vecf64.iter().zip(nu_vec.iter()) {
-            assert!((a - b).abs() < 1e-6*f64::max(a,b).abs());
+            assert!((a - b).abs() < 1e-6 * f64::max(a, b).abs());
         }
     }
 
@@ -912,7 +948,10 @@ mod tests {
         let buf = DataBuffer::from(vec_f32.clone()); // Convert into buffer
 
         for (i, val) in buf.byte_chunks().enumerate() {
-            assert_eq!(reinterpret::reinterpret_slice::<u8, f32>(val)[0], vec_f32[i]);
+            assert_eq!(
+                reinterpret::reinterpret_slice::<u8, f32>(val)[0],
+                vec_f32[i]
+            );
         }
     }
 
@@ -942,7 +981,7 @@ mod tests {
         // Zero float is always represented by four zero bytes in IEEE format.
         vec_f32.push(0.0);
         vec_f32.push(0.0);
-        buf.extend_bytes(&[0,0,0,0, 0,0,0,0]).unwrap();
+        buf.extend_bytes(&[0, 0, 0, 0, 0, 0, 0, 0]).unwrap();
 
         for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
@@ -950,21 +989,38 @@ mod tests {
 
         // Test byte getters
         for i in 5..7 {
-            assert_eq!(buf.get_bytes(i), &[0,0,0,0]);
-            assert_eq!(buf.get_bytes_mut(i), &[0,0,0,0]);
+            assert_eq!(buf.get_bytes(i), &[0, 0, 0, 0]);
+            assert_eq!(buf.get_bytes_mut(i), &[0, 0, 0, 0]);
         }
 
         vec_f32.push(0.0);
-        buf.push_bytes(&[0,0,0,0]).unwrap();
+        buf.push_bytes(&[0, 0, 0, 0]).unwrap();
 
         for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
         }
     }
 
+    /// Test appending to a data buffer from another data buffer.
+    #[test]
+    fn append_test() {
+        let mut buf = DataBuffer::with_type::<f32>(); // Create an empty buffer.
+
+        let data = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
+        // Append an ordianry vector of data.
+        let mut other_buf = DataBuffer::from_vec(data.clone());
+        buf.append(&mut other_buf);
+
+        assert!(other_buf.is_empty());
+
+        for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
+            assert_eq!(val, data[i]);
+        }
+    }
+
     /// Test appending to a data buffer from other slices and vectors.
     #[test]
-    fn extend_append_test() {
+    fn extend_append_bytes_test() {
         let mut buf = DataBuffer::with_type::<f32>(); // Create an empty buffer.
 
         // Append an ordianry vector of data.
