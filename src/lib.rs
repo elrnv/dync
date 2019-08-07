@@ -577,6 +577,40 @@ impl DataBuffer {
         }
     }
 
+    /// Rotates the slice in-place such that the first `mid` elements of the slice move to the end
+    /// while the last `self.len() - mid` elements move to the front. After calling `rotate_left`,
+    /// the element previously at index `mid` will become the first element in the slice.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use data_buffer::*;
+    /// let mut buf = DataBuffer::from_vec(vec![1u32,2,3,4,5]);
+    /// buf.rotate_left(3);
+    /// assert_eq!(buf.as_slice::<u32>().unwrap(), &[4,5,1,2,3]);
+    /// ```
+    #[inline]
+    pub fn rotate_left(&mut self, mid: usize) {
+        self.data.rotate_left(mid * self.element_size);
+    }
+
+    /// Rotates the slice in-place such that the first `self.len() - k` elements of the slice move
+    /// to the end while the last `k` elements move to the front. After calling `rotate_right`, the
+    /// element previously at index `k` will become the first element in the slice.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use data_buffer::*;
+    /// let mut buf = DataBuffer::from_vec(vec![1u32,2,3,4,5]);
+    /// buf.rotate_right(3);
+    /// assert_eq!(buf.as_slice::<u32>().unwrap(), &[3,4,5,1,2]);
+    /// ```
+    #[inline]
+    pub fn rotate_right(&mut self, k: usize) {
+        self.data.rotate_right(k * self.element_size);
+    }
+
     /*
      * Methods specific to buffers storing numeric data
      */
