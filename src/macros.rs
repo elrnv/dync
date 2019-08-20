@@ -16,7 +16,7 @@
 /// struct MyBuffer(DataBuffer);
 /// impl fmt::Display for MyBuffer {
 ///     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-///         fn display_buf<T: Any + fmt::Display>(buf: &DataBuffer, f: &mut fmt::Formatter) {
+///         unsafe fn display_buf<T: Any + fmt::Display>(buf: &DataBuffer, f: &mut fmt::Formatter) {
 ///             for item in buf.iter::<T>().unwrap() {
 ///                 write!(f, "{} ", item)
 ///                     .expect("Error occurred while writing MyBuffer.");
@@ -33,18 +33,20 @@ macro_rules! call_numeric_buffer_fn {
     ($fn:ident ::<_,$($params:ident),*>( $data:expr, $($args:expr),* ) or $err:block ) => {
         {
             let buf = $data;
-            match buf.element_type_id() {
-                x if x == ::std::any::TypeId::of::<u8>() =>  $fn::<u8,$($params),*> (buf, $($args),*),
-                x if x == ::std::any::TypeId::of::<i8>() =>  $fn::<i8,$($params),*> (buf, $($args),*),
-                x if x == ::std::any::TypeId::of::<u16>() => $fn::<u16,$($params),*>(buf, $($args),*),
-                x if x == ::std::any::TypeId::of::<i16>() => $fn::<i16,$($params),*>(buf, $($args),*),
-                x if x == ::std::any::TypeId::of::<u32>() => $fn::<u32,$($params),*>(buf, $($args),*),
-                x if x == ::std::any::TypeId::of::<i32>() => $fn::<i32,$($params),*>(buf, $($args),*),
-                x if x == ::std::any::TypeId::of::<u64>() => $fn::<u64,$($params),*>(buf, $($args),*),
-                x if x == ::std::any::TypeId::of::<i64>() => $fn::<i64,$($params),*>(buf, $($args),*),
-                x if x == ::std::any::TypeId::of::<f32>() => $fn::<f32,$($params),*>(buf, $($args),*),
-                x if x == ::std::any::TypeId::of::<f64>() => $fn::<f64,$($params),*>(buf, $($args),*),
-                _ => $err,
+            unsafe {
+                match buf.element_type_id() {
+                    x if x == ::std::any::TypeId::of::<u8>() =>  $fn::<u8,$($params),*> (buf, $($args),*),
+                    x if x == ::std::any::TypeId::of::<i8>() =>  $fn::<i8,$($params),*> (buf, $($args),*),
+                    x if x == ::std::any::TypeId::of::<u16>() => $fn::<u16,$($params),*>(buf, $($args),*),
+                    x if x == ::std::any::TypeId::of::<i16>() => $fn::<i16,$($params),*>(buf, $($args),*),
+                    x if x == ::std::any::TypeId::of::<u32>() => $fn::<u32,$($params),*>(buf, $($args),*),
+                    x if x == ::std::any::TypeId::of::<i32>() => $fn::<i32,$($params),*>(buf, $($args),*),
+                    x if x == ::std::any::TypeId::of::<u64>() => $fn::<u64,$($params),*>(buf, $($args),*),
+                    x if x == ::std::any::TypeId::of::<i64>() => $fn::<i64,$($params),*>(buf, $($args),*),
+                    x if x == ::std::any::TypeId::of::<f32>() => $fn::<f32,$($params),*>(buf, $($args),*),
+                    x if x == ::std::any::TypeId::of::<f64>() => $fn::<f64,$($params),*>(buf, $($args),*),
+                    _ => $err,
+                }
             }
         }
     };
@@ -60,18 +62,20 @@ macro_rules! call_numeric_buffer_fn {
     ($data:ident . $fn:ident ::<_,$($params:ident),*>( $($args:expr),* ) or $err:block ) => {
         {
             let buf = $data;
-            match buf.element_type_id() {
-                x if x == ::std::any::TypeId::of::<u8>() =>  buf.$fn::<u8,$($params),*> ($($args),*),
-                x if x == ::std::any::TypeId::of::<i8>() =>  buf.$fn::<i8,$($params),*> ($($args),*),
-                x if x == ::std::any::TypeId::of::<u16>() => buf.$fn::<u16,$($params),*>($($args),*),
-                x if x == ::std::any::TypeId::of::<i16>() => buf.$fn::<i16,$($params),*>($($args),*),
-                x if x == ::std::any::TypeId::of::<u32>() => buf.$fn::<u32,$($params),*>($($args),*),
-                x if x == ::std::any::TypeId::of::<i32>() => buf.$fn::<i32,$($params),*>($($args),*),
-                x if x == ::std::any::TypeId::of::<u64>() => buf.$fn::<u64,$($params),*>($($args),*),
-                x if x == ::std::any::TypeId::of::<i64>() => buf.$fn::<i64,$($params),*>($($args),*),
-                x if x == ::std::any::TypeId::of::<f32>() => buf.$fn::<f32,$($params),*>($($args),*),
-                x if x == ::std::any::TypeId::of::<f64>() => buf.$fn::<f64,$($params),*>($($args),*),
-                _ => $err,
+            unsafe {
+                match buf.element_type_id() {
+                    x if x == ::std::any::TypeId::of::<u8>() =>  buf.$fn::<u8,$($params),*> ($($args),*),
+                    x if x == ::std::any::TypeId::of::<i8>() =>  buf.$fn::<i8,$($params),*> ($($args),*),
+                    x if x == ::std::any::TypeId::of::<u16>() => buf.$fn::<u16,$($params),*>($($args),*),
+                    x if x == ::std::any::TypeId::of::<i16>() => buf.$fn::<i16,$($params),*>($($args),*),
+                    x if x == ::std::any::TypeId::of::<u32>() => buf.$fn::<u32,$($params),*>($($args),*),
+                    x if x == ::std::any::TypeId::of::<i32>() => buf.$fn::<i32,$($params),*>($($args),*),
+                    x if x == ::std::any::TypeId::of::<u64>() => buf.$fn::<u64,$($params),*>($($args),*),
+                    x if x == ::std::any::TypeId::of::<i64>() => buf.$fn::<i64,$($params),*>($($args),*),
+                    x if x == ::std::any::TypeId::of::<f32>() => buf.$fn::<f32,$($params),*>($($args),*),
+                    x if x == ::std::any::TypeId::of::<f64>() => buf.$fn::<f64,$($params),*>($($args),*),
+                    _ => $err,
+                }
             }
         }
     };

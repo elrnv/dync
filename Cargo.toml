@@ -1,6 +1,6 @@
 [package]
 name = "data-buffer"
-version = "0.6.1"
+version = "0.7.0"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 license = "MIT OR Apache-2.0"
 description = "A simple low-level data buffer type useful for IO and in homogeneous collections"
@@ -16,7 +16,7 @@ keywords = ["buffer", "io", "data"]
 travis-ci = { repository = "elrnv/buffer", branch = "master" }
 
 [dependencies]
-reinterpret = "0.1"
+reinterpret = "0.2"
 num-traits = { version = "0.2", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_bytes = { version = "0.11", optional = true }

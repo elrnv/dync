@@ -367,7 +367,7 @@ impl DataBuffer {
     /// determine the type `T` automatically.
     #[inline]
     pub fn into_vec<T: Any>(self) -> Option<Vec<T>> {
-        self.check::<T>().map(|x| x.reinterpret_into_vec())
+        unsafe { self.check::<T>().map(|x| x.reinterpret_into_vec()) }
     }
 
     /// Convert this buffer into a typed slice.
@@ -463,31 +463,31 @@ impl DataBuffer {
     /// Move buffer data to a vector with a given type, reinterpreting the data type as
     /// required.
     #[inline]
-    pub fn reinterpret_into_vec<T>(self) -> Vec<T> {
+    pub unsafe fn reinterpret_into_vec<T>(self) -> Vec<T> {
         reinterpret::reinterpret_vec(self.data)
     }
 
     /// Borrow buffer data and reinterpret it as a slice of a given type.
     #[inline]
-    pub fn reinterpret_as_slice<T>(&self) -> &[T] {
+    pub unsafe fn reinterpret_as_slice<T>(&self) -> &[T] {
         reinterpret::reinterpret_slice(self.data.as_slice())
     }
 
     /// Mutably borrow buffer data and reinterpret it as a mutable slice of a given type.
     #[inline]
-    pub fn reinterpret_as_mut_slice<T>(&mut self) -> &mut [T] {
+    pub unsafe fn reinterpret_as_mut_slice<T>(&mut self) -> &mut [T] {
         reinterpret::reinterpret_mut_slice(self.data.as_mut_slice())
     }
 
     /// Borrow buffer data and iterate over reinterpreted underlying data.
     #[inline]
-    pub fn reinterpret_iter<T>(&self) -> slice::Iter<T> {
+    pub unsafe fn reinterpret_iter<T>(&self) -> slice::Iter<T> {
         self.reinterpret_as_slice().iter()
     }
 
     /// Mutably borrow buffer data and mutably iterate over reinterpreted underlying data.
     #[inline]
-    pub fn reinterpret_iter_mut<T>(&mut self) -> slice::IterMut<T> {
+    pub unsafe fn reinterpret_iter_mut<T>(&mut self) -> slice::IterMut<T> {
         self.reinterpret_as_mut_slice().iter_mut()
     }
 
@@ -622,7 +622,7 @@ impl DataBuffer {
         T: Any + Copy + NumCast + Zero,
     {
         // Helper function (generic on the input) to convert the given DataBuffer into Vec.
-        fn convert_into_vec<I, O>(buf: DataBuffer) -> Vec<O>
+        unsafe fn convert_into_vec<I, O>(buf: DataBuffer) -> Vec<O>
         where
             I: Any + NumCast,
             O: Any + Copy + NumCast + Zero,
@@ -638,7 +638,7 @@ impl DataBuffer {
 
     #[cfg(feature = "numeric")]
     /// Display the contents of this buffer reinterpreted in the given type.
-    fn reinterpret_display<T: Any + fmt::Display>(&self, f: &mut fmt::Formatter) {
+    unsafe fn reinterpret_display<T: Any + fmt::Display>(&self, f: &mut fmt::Formatter) {
         debug_assert_eq!(self.element_type_id(), TypeId::of::<T>()); // Check invariant.
         for item in self.reinterpret_iter::<T>() {
             write!(f, "{} ", item).expect("Error occurred while writing an DataBuffer.");
@@ -927,25 +927,28 @@ mod tests {
             assert_eq!(val, vec_u8[i]);
         }
 
-        // TODO: feature gate these two tests for little endian platforms.
-        // Check iterating over data with a larger size than input.
-        let vec_u32 = vec![17_040_129u32, 545_260_546]; // little endian
-        let buf = DataBuffer::from(vec_u8.clone()); // Convert into buffer
-        for (i, &val) in buf.reinterpret_iter::<u32>().enumerate() {
-            assert_eq!(val, vec_u32[i]);
+        // Check unsafe functions:
+        unsafe {
+            // TODO: feature gate these two tests for little endian platforms.
+            // Check iterating over data with a larger size than input.
+            let vec_u32 = vec![17_040_129u32, 545_260_546]; // little endian
+            let buf = DataBuffer::from(vec_u8.clone()); // Convert into buffer
+            for (i, &val) in buf.reinterpret_iter::<u32>().enumerate() {
+                assert_eq!(val, vec_u32[i]);
+            }
+
+            // Check iterating over data with a smaller size than input
+            let mut buf2 = DataBuffer::from(vec_u32); // Convert into buffer
+            for (i, &val) in buf2.reinterpret_iter::<u8>().enumerate() {
+                assert_eq!(val, vec_u8[i]);
+            }
+
+            // Check mut iterator
+            buf2.reinterpret_iter_mut::<u8>().for_each(|val| *val += 1);
+
+            let u8_check_vec = vec![2u8, 4, 5, 2, 3, 5, 129, 33];
+            assert_eq!(buf2.reinterpret_into_vec::<u8>(), u8_check_vec);
         }
-
-        // Check iterating over data with a smaller size than input
-        let mut buf2 = DataBuffer::from(vec_u32); // Convert into buffer
-        for (i, &val) in buf2.reinterpret_iter::<u8>().enumerate() {
-            assert_eq!(val, vec_u8[i]);
-        }
-
-        // Check mut iterator
-        buf2.reinterpret_iter_mut::<u8>().for_each(|val| *val += 1);
-
-        let u8_check_vec = vec![2u8, 4, 5, 2, 3, 5, 129, 33];
-        assert_eq!(buf2.reinterpret_into_vec::<u8>(), u8_check_vec);
     }
 
     #[test]
@@ -983,7 +986,7 @@ mod tests {
 
         for (i, val) in buf.byte_chunks().enumerate() {
             assert_eq!(
-                reinterpret::reinterpret_slice::<u8, f32>(val)[0],
+                unsafe { reinterpret::reinterpret_slice::<u8, f32>(val)[0] },
                 vec_f32[i]
             );
         }
@@ -1059,7 +1062,7 @@ mod tests {
 
         // Append an ordianry vector of data.
         let vec_f32 = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
-        let mut vec_bytes: Vec<u8> = reinterpret::reinterpret_vec(vec_f32.clone());
+        let mut vec_bytes: Vec<u8> = unsafe { reinterpret::reinterpret_vec(vec_f32.clone()) };
         buf.append_bytes(&mut vec_bytes);
 
         for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
@@ -1077,7 +1080,7 @@ mod tests {
         assert_eq!(buf.len(), 0);
 
         // Extend buffer with a slice
-        let slice_bytes: &[u8] = reinterpret::reinterpret_slice(&vec_f32);
+        let slice_bytes: &[u8] = unsafe { reinterpret::reinterpret_slice(&vec_f32) };
         buf.extend_bytes(slice_bytes);
 
         for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
