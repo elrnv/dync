@@ -1,8 +1,7 @@
 //! This crate defines a buffer data structure optimized to be written to and read from standard
 //! `Vec`s. `DataBuffer` is particularly useful when dealing with data whose type is determined at
 //! run time.  Note that data is stored in the underlying byte buffers in native endian form, thus
-//! requesting typed data from a buffer on a platform with different endianness will produce
-//! undefined behavior.
+//! requesting typed data from a buffer on a platform with different endianness is unsafe.
 //!
 //! # Caveats
 //!
@@ -169,6 +168,30 @@ impl DataBuffer {
         Self::from_vec(vec)
     }
 
+    /// Resizes the buffer in-place to store `new_len` elements and returns an optional
+    /// mutable reference to `Self`.
+    ///
+    /// If `T` does not correspond to the underlying element type, then `None` is returned and the
+    /// `DataBuffer` is left unchanged.
+    ///
+    /// This function has the similar properties to `Vec::resize`.
+    #[inline]
+    pub fn resize<T: Any + Clone>(&mut self, new_len: usize, value: T) -> Option<&mut Self> {
+        self.check_ref::<T>()?;
+        let size_t = size_of::<T>();
+        if new_len >= self.len() {
+            let diff = new_len - self.len();
+            self.reserve_bytes(diff * size_t);
+            for _ in 0..diff {
+                self.push(value.clone());
+            }
+        } else {
+            // Truncate
+            self.data.resize(new_len * size_t, 0);
+        }
+        Some(self)
+    }
+
     /// Copy data from a given slice into the current buffer.
     #[inline]
     pub fn copy_from_slice<T: Any + Copy>(&mut self, slice: &[T]) -> &mut Self {
@@ -218,7 +241,7 @@ impl DataBuffer {
     /// stored by this buffer, then the modified buffer is returned via a mutable reference.
     /// Otherwise, `None` is returned.
     #[inline]
-    pub fn push<T: Any + std::fmt::Debug>(&mut self, element: T) -> Option<&mut Self> {
+    pub fn push<T: Any>(&mut self, element: T) -> Option<&mut Self> {
         self.check_ref::<T>()?;
         let element_ref = &element;
         let element_byte_ptr = element_ref as *const T as *const u8;
@@ -413,6 +436,12 @@ impl DataBuffer {
     /*
      * Advanced methods to probe buffer internals.
      */
+
+    /// Reserves capacity for at least `additional` more bytes to be inserted in this buffer.
+    #[inline]
+    pub fn reserve_bytes(&mut self, additional: usize) {
+        self.data.reserve(additional);
+    }
 
     /// Get `i`'th element of the buffer by value without checking type.
     /// This can be used to reinterpret the internal data as a different type. Note that if the
@@ -702,12 +731,14 @@ mod tests {
         assert_eq!(a.len(), 0);
         assert_eq!(a.as_bytes().len(), 0);
         assert_eq!(a.element_type_id(), TypeId::of::<f32>());
+        assert_eq!(a.byte_capacity(), 0); // Ensure nothing is allocated.
 
         // Empty buffer typed by the given type id.
         let b = DataBuffer::with_buffer_type(&a);
         assert_eq!(b.len(), 0);
         assert_eq!(b.as_bytes().len(), 0);
         assert_eq!(b.element_type_id(), TypeId::of::<f32>());
+        assert_eq!(a.byte_capacity(), 0); // Ensure nothing is allocated.
 
         // Empty typed buffer with a given capacity.
         let a = DataBuffer::with_capacity::<f32>(4);
@@ -715,6 +746,41 @@ mod tests {
         assert_eq!(a.as_bytes().len(), 0);
         assert_eq!(a.byte_capacity(), 4 * size_of::<f32>());
         assert_eq!(a.element_type_id(), TypeId::of::<f32>());
+    }
+
+    /// Test reserving capacity after creation.
+    #[test]
+    fn reserve_bytes() {
+        let mut a = DataBuffer::with_type::<f32>();
+        assert_eq!(a.byte_capacity(), 0);
+        a.reserve_bytes(10);
+        assert_eq!(a.len(), 0);
+        assert_eq!(a.as_bytes().len(), 0);
+        assert!(a.byte_capacity() >= 10);
+    }
+
+    /// Test resizing a buffer.
+    #[test]
+    fn resize() {
+        let mut a = DataBuffer::with_type::<f32>();
+
+        // Increase the size of a.
+        a.resize(3, 1.0f32);
+
+        assert_eq!(a.len(), 3);
+        assert_eq!(a.as_bytes().len(), 12);
+        for i in 0..3 {
+            assert_eq!(a.get::<f32>(i).unwrap(), 1.0f32);
+        }
+
+        // Truncate a.
+        a.resize(2, 1.0f32);
+
+        assert_eq!(a.len(), 2);
+        assert_eq!(a.as_bytes().len(), 8);
+        for i in 0..2 {
+            assert_eq!(a.get::<f32>(i).unwrap(), 1.0f32);
+        }
     }
 
     #[test]
