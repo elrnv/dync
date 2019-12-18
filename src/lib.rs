@@ -44,17 +44,18 @@ mod serde_helpers {
     }
 }
 
-/// Buffer of plain old data. The data is stored as an array of bytes (`Vec<u8>`).
+/// Buffer of data. The data is stored as an array of bytes (`Vec<u8>`).
 /// `DataBuffer` keeps track of the type stored within via an explicit `TypeId` member. This allows
 /// one to hide the type from the compiler and check it only when necessary. It is particularly
 /// useful when the type of data is determined at runtime (e.g. when parsing numeric data).
 #[derive(Clone, Debug, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DataBuffer {
-    /// Raw data stored as an array of bytes.
+    /// Raw data stored as bytes.
     #[cfg_attr(feature = "serde_bytes", serde(with = "serde_bytes"))]
-    data: Vec<u8>,
-    /// Number of bytes occupied by ana element of this buffer.
+    data: Vec<usize>,
+    /// Number of bytes occupied by an element of this buffer.
+    ///
     /// Note: We store this instead of length because it gives us the ability to get the type size
     /// when the buffer is empty.
     element_size: usize,
@@ -193,6 +194,9 @@ impl DataBuffer {
     }
 
     /// Copy data from a given slice into the current buffer.
+    ///
+    /// The `DataBuffer` is extended if the given slice is larger than the number of elements
+    /// already stored in this `DataBuffer`.
     #[inline]
     pub fn copy_from_slice<T: Any + Copy>(&mut self, slice: &[T]) -> &mut Self {
         let element_size = size_of::<T>();
@@ -246,7 +250,7 @@ impl DataBuffer {
         let element_ref = &element;
         let element_byte_ptr = element_ref as *const T as *const u8;
         let element_byte_slice = unsafe { slice::from_raw_parts(element_byte_ptr, size_of::<T>()) };
-        self.push_bytes(element_byte_slice)
+        unsafe { self.push_bytes(element_byte_slice) }
     }
 
     /// Check if the current buffer contains elements of the specified type. Returns `Some(self)`
@@ -311,7 +315,7 @@ impl DataBuffer {
         self.data.capacity()
     }
 
-    /// Get the size of the element type.
+    /// Get the size of the element type in bytes.
     #[inline]
     pub fn element_size(&self) -> usize {
         self.element_size
@@ -476,15 +480,20 @@ impl DataBuffer {
     /// Get a `const` reference to the byte slice of the `i`'th element of the buffer.
     #[inline]
     pub fn get_bytes(&self, i: usize) -> &[u8] {
-        assert!(i < self.len());
+        debug_assert!(i < self.len());
         let element_size = self.element_size();
         &self.data[i * element_size..(i + 1) * element_size]
     }
 
     /// Get a mutable reference to the byte slice of the `i`'th element of the buffer.
+    ///
+    /// # Unsafety
+    ///
+    /// This function is marked as unsafe since the returned bytes may be modified
+    /// arbitrarily, which may potentially produce malformed values.
     #[inline]
-    pub fn get_bytes_mut(&mut self, i: usize) -> &mut [u8] {
-        assert!(i < self.len());
+    pub unsafe fn get_bytes_mut(&mut self, i: usize) -> &mut [u8] {
+        debug_assert!(i < self.len());
         let element_size = self.element_size();
         &mut self.data[i * element_size..(i + 1) * element_size]
     }
@@ -527,8 +536,13 @@ impl DataBuffer {
     }
 
     /// Get a mutable reference to the internal data representation.
+    ///
+    /// # Unsafety
+    ///
+    /// This function is marked as unsafe since the returned bytes may be modified
+    /// arbitrarily, which may potentially produce malformed values.
     #[inline]
-    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+    pub unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
         self.data.as_mut_slice()
     }
 
@@ -545,8 +559,13 @@ impl DataBuffer {
     /// avoids needing to know what type data you're dealing with. This type of iterator is useful
     /// for transferring data from one place to another for a generic buffer, or modifying the
     /// underlying untyped bytes (e.g. bit twiddling).
+    ///
+    /// # Unsafety
+    ///
+    /// This function is marked as unsafe since the returned bytes may be modified
+    /// arbitrarily, which may potentially produce malformed values.
     #[inline]
-    pub fn byte_chunks_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut [u8]> + 'a {
+    pub unsafe fn byte_chunks_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut [u8]> + 'a {
         let chunk_size = self.element_size();
         self.data.chunks_mut(chunk_size)
     }
@@ -556,7 +575,7 @@ impl DataBuffer {
     /// buffer and a mutable reference to the buffer is returned.
     /// Otherwise, `None` is returned, and the buffer remains unmodified.
     #[inline]
-    pub fn push_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
+    pub unsafe fn push_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
         if bytes.len() == self.element_size() {
             self.data.extend_from_slice(bytes);
             Some(self)
@@ -570,7 +589,7 @@ impl DataBuffer {
     /// buffer and a mutable reference to the buffer is returned.
     /// Otherwise, `None` is returned and the buffer is unmodified.
     #[inline]
-    pub fn extend_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
+    pub unsafe fn extend_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
         let element_size = self.element_size();
         if bytes.len() % element_size == 0 {
             self.data.extend_from_slice(bytes);
@@ -585,7 +604,7 @@ impl DataBuffer {
     /// buffer and a mutable reference to the buffer is returned.
     /// Otherwise, `None` is returned and both the buffer and the input vector remain unmodified.
     #[inline]
-    pub fn append_bytes(&mut self, bytes: &mut Vec<u8>) -> Option<&mut Self> {
+    pub unsafe fn append_bytes(&mut self, bytes: &mut Vec<u8>) -> Option<&mut Self> {
         let element_size = self.element_size();
         if bytes.len() % element_size == 0 {
             self.data.append(bytes);
@@ -1084,7 +1103,7 @@ mod tests {
         // Zero float is always represented by four zero bytes in IEEE format.
         vec_f32.push(0.0);
         vec_f32.push(0.0);
-        buf.extend_bytes(&[0, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+        unsafe { buf.extend_bytes(&[0, 0, 0, 0, 0, 0, 0, 0]) }.unwrap();
 
         for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
@@ -1093,11 +1112,11 @@ mod tests {
         // Test byte getters
         for i in 5..7 {
             assert_eq!(buf.get_bytes(i), &[0, 0, 0, 0]);
-            assert_eq!(buf.get_bytes_mut(i), &[0, 0, 0, 0]);
+            assert_eq!(unsafe { buf.get_bytes_mut(i) }, &[0, 0, 0, 0]);
         }
 
         vec_f32.push(0.0);
-        buf.push_bytes(&[0, 0, 0, 0]).unwrap();
+        unsafe { buf.push_bytes(&[0, 0, 0, 0]) }.unwrap();
 
         for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
@@ -1129,7 +1148,7 @@ mod tests {
         // Append an ordianry vector of data.
         let vec_f32 = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
         let mut vec_bytes: Vec<u8> = unsafe { reinterpret::reinterpret_vec(vec_f32.clone()) };
-        buf.append_bytes(&mut vec_bytes);
+        unsafe { buf.append_bytes(&mut vec_bytes) };
 
         for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
@@ -1139,7 +1158,7 @@ mod tests {
         assert_eq!(buf.len(), 0);
 
         // Append a temporary vec.
-        buf.append_bytes(&mut vec![0u8; 4]);
+        unsafe { buf.append_bytes(&mut vec![0u8; 4]) };
         assert_eq!(buf.get::<f32>(0).unwrap(), 0.0f32);
 
         buf.clear();
@@ -1147,7 +1166,7 @@ mod tests {
 
         // Extend buffer with a slice
         let slice_bytes: &[u8] = unsafe { reinterpret::reinterpret_slice(&vec_f32) };
-        buf.extend_bytes(slice_bytes);
+        unsafe { buf.extend_bytes(slice_bytes) };
 
         for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
