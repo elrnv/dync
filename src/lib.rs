@@ -53,7 +53,7 @@ mod serde_helpers {
 pub struct DataBuffer {
     /// Raw data stored as bytes.
     #[cfg_attr(feature = "serde_bytes", serde(with = "serde_bytes"))]
-    data: Vec<usize>,
+    data: Vec<u8>,
     /// Number of bytes occupied by an element of this buffer.
     ///
     /// Note: We store this instead of length because it gives us the ability to get the type size
