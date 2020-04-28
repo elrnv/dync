@@ -148,9 +148,7 @@ impl DataBuffer {
             let capacity_in_bytes = md.capacity() * element_size;
             let vec_ptr = md.as_mut_ptr() as *mut u8;
 
-            unsafe {
-                Vec::from_raw_parts(vec_ptr, len_in_bytes, capacity_in_bytes)
-            }
+            unsafe { Vec::from_raw_parts(vec_ptr, len_in_bytes, capacity_in_bytes) }
         };
 
         DataBuffer {
@@ -497,7 +495,7 @@ impl DataBuffer {
 
     /// Move buffer data to a vector with a given type, reinterpreting the data type as
     /// required.
-    /// 
+    ///
     /// # Safety
     ///
     /// The underlying data must be correctly represented by a `Vec<T>`.
@@ -507,7 +505,7 @@ impl DataBuffer {
     }
 
     /// Borrow buffer data and reinterpret it as a slice of a given type.
-    /// 
+    ///
     /// # Safety
     ///
     /// The underlying data must be correctly represented by a `&[T]` when borrowed as`&[u8]`.
