@@ -275,7 +275,7 @@ impl DataBuffer {
     /// Check if the current buffer contains elements of the specified type. Same as `check_ref`
     /// but consumes and produces a mut reference to self.
     #[inline]
-    pub fn check_mut<'a, T: Any>(&'a mut self) -> Option<&'a mut Self> {
+    pub fn check_mut<T: Any>(&mut self) -> Option<&mut Self> {
         if TypeId::of::<T>() != self.element_type_id() {
             None
         } else {
@@ -443,9 +443,15 @@ impl DataBuffer {
     }
 
     /// Get `i`'th element of the buffer by value without checking type.
+    ///
     /// This can be used to reinterpret the internal data as a different type. Note that if the
     /// size of the given type `T` doesn't match the size of the internal type, `i` will really
     /// index the `i`th `T` sized chunk in the current buffer. See the implementation for details.
+    ///
+    /// # Safety
+    ///
+    /// It is assumed that that the buffer contains elements of type `T`, otherwise this function
+    /// will cause undefined behavior.
     #[inline]
     pub unsafe fn get_unchecked<T: Any + Copy>(&self, i: usize) -> T {
         let ptr = self.data.as_ptr() as *const T;
@@ -456,6 +462,11 @@ impl DataBuffer {
     /// This can be used to reinterpret the internal data as a different type. Note that if the
     /// size of the given type `T` doesn't match the size of the internal type, `i` will really
     /// index the `i`th `T` sized chunk in the current buffer. See the implementation for details.
+    ///
+    /// # Safety
+    ///
+    /// It is assumed that that the buffer contains elements of type `T`, otherwise this function
+    /// will cause undefined behavior.
     #[inline]
     pub unsafe fn get_unchecked_ref<T: Any>(&self, i: usize) -> &T {
         let ptr = self.data.as_ptr() as *const T;
@@ -466,6 +477,11 @@ impl DataBuffer {
     /// This can be used to reinterpret the internal data as a different type. Note that if the
     /// size of the given type `T` doesn't match the size of the internal type, `i` will really
     /// index the `i`th `T` sized chunk in the current buffer. See the implementation for details.
+    ///
+    /// # Safety
+    ///
+    /// It is assumed that that the buffer contains elements of type `T`, otherwise this function
+    /// will cause undefined behavior.
     #[inline]
     pub unsafe fn get_unchecked_mut<T: Any>(&mut self, i: usize) -> &mut T {
         let ptr = self.data.as_mut_ptr() as *mut T;
@@ -594,6 +610,11 @@ impl DataBuffer {
     /// underlying element type, then these bytes are added to the underlying data buffer and a
     /// mutable reference to the buffer is returned.
     /// Otherwise, `None` is returned, and the buffer remains unmodified.
+    ///
+    /// # Safety
+    ///
+    /// It is assumed that that the given `bytes` slice is a valid representation of the element
+    /// types stored in this buffer. Otherwise this function will cause undefined behavior.
     #[inline]
     pub unsafe fn push_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
         if bytes.len() == self.element_size() {
@@ -610,6 +631,12 @@ impl DataBuffer {
     /// underlying element type, then these bytes are added to the underlying data buffer and a
     /// mutable reference to the buffer is returned.
     /// Otherwise, `None` is returned and the buffer is unmodified.
+    ///
+    /// # Safety
+    ///
+    /// It is assumed that that the given `bytes` slice is a valid representation of a contiguous
+    /// collection of elements with the same type as stored in this buffer. Otherwise this function
+    /// will cause undefined behavior.
     #[inline]
     pub unsafe fn extend_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
         let element_size = self.element_size();
@@ -627,6 +654,12 @@ impl DataBuffer {
     /// underlying element type, then these bytes are moved to the underlying data buffer and a
     /// mutable reference to the buffer is returned.
     /// Otherwise, `None` is returned and both the buffer and the input vector remain unmodified.
+    ///
+    /// # Safety
+    ///
+    /// It is assumed that that the given `bytes` `Vec` is a valid representation of a contiguous
+    /// collection of elements with the same type as stored in this buffer. Otherwise this function
+    /// will cause undefined behavior.
     #[inline]
     pub unsafe fn append_bytes(&mut self, bytes: &mut Vec<u8>) -> Option<&mut Self> {
         let element_size = self.element_size();
