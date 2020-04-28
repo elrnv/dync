@@ -1,13 +1,17 @@
 //! This crate defines a buffer data structure optimized to be written to and read from standard
-//! `Vec`s. `DataBuffer` is particularly useful when dealing with data whose type is determined at
+//! `Vec`s.
+//!
+//! [`DataBuffer`] is particularly useful when dealing with plain data whose type is determined at
 //! run time.  Note that data is stored in the underlying byte buffers in native endian form, thus
 //! requesting typed data from a buffer on a platform with different endianness is unsafe.
 //!
 //! # Caveats
 //!
-//! `DataBuffer` doesn't support zero-sized types.
+//! [`DataBuffer`] doesn't support zero-sized types.
+//!
+//! [`DataBuffer`]: struct.DataBuffer
 
-pub use reinterpret;
+pub mod macros;
 
 use std::{
     any::{Any, TypeId},
@@ -20,8 +24,6 @@ use std::fmt;
 
 #[cfg(feature = "numeric")]
 use num_traits::{cast, NumCast, Zero};
-
-pub mod macros;
 
 #[cfg(feature = "serde")]
 mod serde_helpers {
@@ -108,15 +110,13 @@ impl DataBuffer {
 
     /// Construct a typed `DataBuffer` with a given size and filled with the specified default
     /// value.
+    ///
     /// #  Examples
     /// ```
-    /// # extern crate data_buffer as buf;
-    /// # use buf::DataBuffer;
-    /// # fn main() {
+    /// use data_buffer::DataBuffer;
     /// let buf = DataBuffer::with_size(8, 42usize); // Create buffer
     /// let buf_vec: Vec<usize> = buf.into_vec().unwrap(); // Convert into `Vec`
     /// assert_eq!(buf_vec, vec![42usize; 8]);
-    /// # }
     /// ```
     #[inline]
     pub fn with_size<T: Any + Clone>(n: usize, def: T) -> Self {
@@ -125,18 +125,16 @@ impl DataBuffer {
 
     /// Construct a `DataBuffer` from a given `Vec<T>` reusing the space already allocated by the
     /// given vector.
+    ///
     /// #  Examples
     /// ```
-    /// # extern crate data_buffer as buf;
-    /// # use buf::DataBuffer;
-    /// # fn main() {
+    /// use data_buffer::DataBuffer;
     /// let vec = vec![1u8, 3, 4, 1, 2];
     /// let buf = DataBuffer::from_vec(vec.clone()); // Convert into buffer
     /// let nu_vec: Vec<u8> = buf.into_vec().unwrap(); // Convert back into `Vec`
     /// assert_eq!(vec, nu_vec);
-    /// # }
     /// ```
-    pub fn from_vec<T: Any>(mut vec: Vec<T>) -> Self {
+    pub fn from_vec<T: Any>(vec: Vec<T>) -> Self {
         let element_size = size_of::<T>();
         assert_ne!(
             element_size, 0,
@@ -144,12 +142,13 @@ impl DataBuffer {
         );
 
         let data = {
-            let len_in_bytes = vec.len() * element_size;
-            let capacity_in_bytes = vec.capacity() * element_size;
-            let vec_ptr = vec.as_mut_ptr() as *mut u8;
+            // Replace with into_raw_parts when that stabilizes.
+            let mut md = std::mem::ManuallyDrop::new(vec);
+            let len_in_bytes = md.len() * element_size;
+            let capacity_in_bytes = md.capacity() * element_size;
+            let vec_ptr = md.as_mut_ptr() as *mut u8;
 
             unsafe {
-                ::std::mem::forget(vec);
                 Vec::from_raw_parts(vec_ptr, len_in_bytes, capacity_in_bytes)
             }
         };
@@ -222,16 +221,14 @@ impl DataBuffer {
     /// Fill the current buffer with copies of the given value. The size of the buffer is left
     /// unchanged. If the given type doesn't patch the internal type, `None` is returned, otherwise
     /// a mut reference to the modified buffer is returned.
+    ///
     /// #  Examples
     /// ```
-    /// # extern crate data_buffer as buf;
-    /// # use buf::DataBuffer;
-    /// # fn main() {
+    /// use data_buffer::DataBuffer;
     /// let vec = vec![1u8, 3, 4, 1, 2];
     /// let mut buf = DataBuffer::from_vec(vec.clone()); // Convert into buffer
     /// buf.fill(0u8);
     /// assert_eq!(buf.into_vec::<u8>().unwrap(), vec![0u8, 0, 0, 0, 0]);
-    /// # }
     /// ```
     #[inline]
     pub fn fill<T: Any + Clone>(&mut self, def: T) -> Option<&mut Self> {
@@ -241,14 +238,16 @@ impl DataBuffer {
         Some(self)
     }
 
-    /// Add an element to this buffer. If the type of the given element coincides with the type
+    /// Add an element to this buffer.
+    ///
+    /// If the type of the given element coincides with the type
     /// stored by this buffer, then the modified buffer is returned via a mutable reference.
     /// Otherwise, `None` is returned.
     #[inline]
     pub fn push<T: Any>(&mut self, element: T) -> Option<&mut Self> {
         self.check_ref::<T>()?;
-        let element_ref = &element;
-        let element_byte_ptr = element_ref as *const T as *const u8;
+        let element_byte_ptr = &element as *const T as *const u8;
+        std::mem::forget(element);
         let element_byte_slice = unsafe { slice::from_raw_parts(element_byte_ptr, size_of::<T>()) };
         unsafe { self.push_bytes(element_byte_slice) }
     }
@@ -323,17 +322,15 @@ impl DataBuffer {
 
     /// Return an iterator to a slice representing typed data.
     /// Returs `None` if the given type `T` doesn't match the internal.
+    ///
     /// # Examples
     /// ```
-    /// # extern crate data_buffer as buf;
-    /// # use buf::DataBuffer;
-    /// # fn main() {
+    /// use data_buffer::DataBuffer;
     /// let vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
     /// let buf = DataBuffer::from(vec.clone()); // Convert into buffer
     /// for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
     ///     assert_eq!(val, vec[i]);
     /// }
-    /// # }
     /// ```
     #[inline]
     pub fn iter<'a, T: Any + 'a>(&'a self) -> Option<slice::Iter<T>> {
@@ -341,7 +338,7 @@ impl DataBuffer {
     }
 
     /// Return an iterator to a mutable slice representing typed data.
-    /// Returs `None` if the given type `T` doesn't match the internal.
+    /// Returns `None` if the given type `T` doesn't match the internal.
     #[inline]
     pub fn iter_mut<'a, T: Any + 'a>(&'a mut self) -> Option<slice::IterMut<T>> {
         self.as_mut_slice::<T>().map(|x| x.iter_mut())
@@ -487,7 +484,7 @@ impl DataBuffer {
 
     /// Get a mutable reference to the byte slice of the `i`'th element of the buffer.
     ///
-    /// # Unsafety
+    /// # Safety
     ///
     /// This function is marked as unsafe since the returned bytes may be modified
     /// arbitrarily, which may potentially produce malformed values.
@@ -500,30 +497,52 @@ impl DataBuffer {
 
     /// Move buffer data to a vector with a given type, reinterpreting the data type as
     /// required.
+    /// 
+    /// # Safety
+    ///
+    /// The underlying data must be correctly represented by a `Vec<T>`.
     #[inline]
     pub unsafe fn reinterpret_into_vec<T>(self) -> Vec<T> {
         reinterpret::reinterpret_vec(self.data)
     }
 
     /// Borrow buffer data and reinterpret it as a slice of a given type.
+    /// 
+    /// # Safety
+    ///
+    /// The underlying data must be correctly represented by a `&[T]` when borrowed as`&[u8]`.
     #[inline]
     pub unsafe fn reinterpret_as_slice<T>(&self) -> &[T] {
         reinterpret::reinterpret_slice(self.data.as_slice())
     }
 
     /// Mutably borrow buffer data and reinterpret it as a mutable slice of a given type.
+    ///
+    /// # Safety
+    ///
+    /// The underlying data must be correctly represented by a `&mut [T]` when borrowed as`&mut
+    /// [u8]`.
     #[inline]
     pub unsafe fn reinterpret_as_mut_slice<T>(&mut self) -> &mut [T] {
         reinterpret::reinterpret_mut_slice(self.data.as_mut_slice())
     }
 
     /// Borrow buffer data and iterate over reinterpreted underlying data.
+    ///
+    /// # Safety
+    ///
+    /// Each underlying element must be correctly represented by a `&T` when borrowed as `&[u8]`.
     #[inline]
     pub unsafe fn reinterpret_iter<T>(&self) -> slice::Iter<T> {
         self.reinterpret_as_slice().iter()
     }
 
     /// Mutably borrow buffer data and mutably iterate over reinterpreted underlying data.
+    ///
+    /// # Safety
+    ///
+    /// Each underlying element must be correctly represented by a `&mut T` when borrowed as `&mut
+    /// [u8]`.
     #[inline]
     pub unsafe fn reinterpret_iter_mut<T>(&mut self) -> slice::IterMut<T> {
         self.reinterpret_as_mut_slice().iter_mut()
@@ -537,7 +556,7 @@ impl DataBuffer {
 
     /// Get a mutable reference to the internal data representation.
     ///
-    /// # Unsafety
+    /// # Safety
     ///
     /// This function is marked as unsafe since the returned bytes may be modified
     /// arbitrarily, which may potentially produce malformed values.
@@ -546,13 +565,14 @@ impl DataBuffer {
         self.data.as_mut_slice()
     }
 
-    /// Iterate over chunks type sized chunks of bytes without interpreting them. This avoids
-    /// needing to know what type data you're dealing with. This type of iterator is useful for
-    /// transferring data from one place to another for a generic buffer.
+    /// Iterate over chunks type sized chunks of bytes without interpreting them.
+    ///
+    /// This avoids needing to know what type data you're dealing with. This type of iterator is
+    /// useful for transferring data from one place to another for a generic buffer.
     #[inline]
     pub fn byte_chunks<'a>(&'a self) -> impl Iterator<Item = &'a [u8]> + 'a {
         let chunk_size = self.element_size();
-        self.data.chunks(chunk_size)
+        self.data.chunks_exact(chunk_size)
     }
 
     /// Mutably iterate over chunks type sized chunks of bytes without interpreting them. This
@@ -560,19 +580,21 @@ impl DataBuffer {
     /// for transferring data from one place to another for a generic buffer, or modifying the
     /// underlying untyped bytes (e.g. bit twiddling).
     ///
-    /// # Unsafety
+    /// # Safety
     ///
     /// This function is marked as unsafe since the returned bytes may be modified
     /// arbitrarily, which may potentially produce malformed values.
     #[inline]
     pub unsafe fn byte_chunks_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut [u8]> + 'a {
         let chunk_size = self.element_size();
-        self.data.chunks_mut(chunk_size)
+        self.data.chunks_exact_mut(chunk_size)
     }
 
-    /// Add bytes to this buffer. If the size of the given slice coincides with the number of bytes
-    /// occupied by the underlying element type, then these bytes are added to the underlying data
-    /// buffer and a mutable reference to the buffer is returned.
+    /// Add bytes to this buffer.
+    ///
+    /// If the size of the given slice coincides with the number of bytes occupied by the
+    /// underlying element type, then these bytes are added to the underlying data buffer and a
+    /// mutable reference to the buffer is returned.
     /// Otherwise, `None` is returned, and the buffer remains unmodified.
     #[inline]
     pub unsafe fn push_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
@@ -584,9 +606,11 @@ impl DataBuffer {
         }
     }
 
-    /// Add bytes to this buffer. If the size of the given slice is a multiple of the number of bytes
-    /// occupied by the underlying element type, then these bytes are added to the underlying data
-    /// buffer and a mutable reference to the buffer is returned.
+    /// Add bytes to this buffer.
+    ///
+    /// If the size of the given slice is a multiple of the number of bytes occupied by the
+    /// underlying element type, then these bytes are added to the underlying data buffer and a
+    /// mutable reference to the buffer is returned.
     /// Otherwise, `None` is returned and the buffer is unmodified.
     #[inline]
     pub unsafe fn extend_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
@@ -599,9 +623,11 @@ impl DataBuffer {
         }
     }
 
-    /// Move bytes to this buffer. If the size of the given vector is a multiple of the number of bytes
-    /// occupied by the underlying element type, then these bytes are moved to the underlying data
-    /// buffer and a mutable reference to the buffer is returned.
+    /// Move bytes to this buffer.
+    ///
+    /// If the size of the given vector is a multiple of the number of bytes occupied by the
+    /// underlying element type, then these bytes are moved to the underlying data buffer and a
+    /// mutable reference to the buffer is returned.
     /// Otherwise, `None` is returned and both the buffer and the input vector remain unmodified.
     #[inline]
     pub unsafe fn append_bytes(&mut self, bytes: &mut Vec<u8>) -> Option<&mut Self> {
@@ -614,7 +640,9 @@ impl DataBuffer {
         }
     }
 
-    /// Move bytes to this buffer. The given buffer must have the same underlying type as self.
+    /// Move bytes to this buffer.
+    ///
+    /// The given buffer must have the same underlying type as `self`.
     #[inline]
     pub fn append(&mut self, buf: &mut DataBuffer) -> Option<&mut Self> {
         if buf.element_type_id() == self.element_type_id() {
@@ -632,7 +660,7 @@ impl DataBuffer {
     /// # Example
     ///
     /// ```
-    /// # use data_buffer::*;
+    /// use data_buffer::*;
     /// let mut buf = DataBuffer::from_vec(vec![1u32,2,3,4,5]);
     /// buf.rotate_left(3);
     /// assert_eq!(buf.as_slice::<u32>().unwrap(), &[4,5,1,2,3]);
@@ -649,7 +677,7 @@ impl DataBuffer {
     /// # Example
     ///
     /// ```
-    /// # use data_buffer::*;
+    /// use data_buffer::*;
     /// let mut buf = DataBuffer::from_vec(vec![1u32,2,3,4,5]);
     /// buf.rotate_right(3);
     /// assert_eq!(buf.as_slice::<u32>().unwrap(), &[3,4,5,1,2]);
