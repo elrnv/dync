@@ -2,21 +2,20 @@
 
 #![macro_use]
 
-/// Applies `$fn` to an `DataBuffer` mapping valid numeric data types by corresponding generic
-/// parameters.  For example, passing an `DataBuffer` containing data of type `u8` will cause this
+/// Applies `$fn` to an `VecCopy` mapping valid numeric data types by corresponding generic
+/// parameters.  For example, passing an `VecCopy` containing data of type `u8` will cause this
 /// macro to call `$fn` with type parameter `u8` like `$fn::<u8>(buffer)`.
 /// # Examples
 /// ```rust
 /// # #[macro_use] extern crate data_buffer as buf;
 /// # use std::fmt;
 /// # use std::any::Any;
-/// # use buf::DataBuffer;
-/// # fn main() {
-/// // Implement pretty printing of a `DataBuffer` derivative for numeric buffers.
-/// struct MyBuffer(DataBuffer);
+/// # use buf::VecCopy;
+/// // Implement pretty printing of a `VecCopy` derivative for numeric buffers.
+/// struct MyBuffer(VecCopy);
 /// impl fmt::Display for MyBuffer {
 ///     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-///         unsafe fn display_buf<T: Any + fmt::Display>(buf: &DataBuffer, f: &mut fmt::Formatter) {
+///         unsafe fn display_buf<T: Copy + Any + fmt::Display>(buf: &VecCopy, f: &mut fmt::Formatter) {
 ///             for item in buf.iter::<T>().unwrap() {
 ///                 write!(f, "{} ", item)
 ///                     .expect("Error occurred while writing MyBuffer.");
@@ -26,7 +25,6 @@
 ///         write!(f, "")
 ///     }
 /// }
-/// # }
 /// ```
 #[macro_export]
 macro_rules! call_numeric_buffer_fn {

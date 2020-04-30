@@ -23,9 +23,13 @@ serde_bytes = { version = "0.11", optional = true }
 
 [dev-dependencies]
 serde_json = "1.0"
+rand = "0.7"
+criterion = "0.3"
 
 [features]
 numeric = ["num-traits"]
 serde_all = ["serde", "serde_bytes"]
 
-
+[[bench]]
+name = "type_erasure"
+harness = false
