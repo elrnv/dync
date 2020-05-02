@@ -4,41 +4,44 @@
 //! containers without needing a downcast.
 //!
 
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::hash::{Hash, Hasher};
+use std::mem::ManuallyDrop;
+use std::fmt;
 
-use crate::vec_clone::{DropBytes, CloneFromFn, CloneFn, DropFn, Elem};
+use crate::vec_clone::Elem;
+use crate::traits::*;
 use crate::bytes::*;
-
 
 // Implement the basis for all value types.
 macro_rules! impl_value_base {
-    ($value:ty, $bytes_type:ty) => {
+    () => {
         /// Get the size of the value pointed-to by this reference.
         #[inline]
         pub fn size(&self) -> usize {
-            self.bytes.len()
+            self.bytes.as_ref().len()
         }
 
         /// Get the `TypeId` of the referenced value.
         #[inline]
-        pub fn type_id(&self) -> TypeId {
+        pub fn value_type_id(&self) -> TypeId {
             self.type_id
         }
 
         /// Returns `true` if this referenced value's type is the same as `T`.
         #[inline]
         pub fn is<T: 'static>(&self) -> bool {
-            self.type_id() == TypeId::of::<T>()
+            self.value_type_id() == TypeId::of::<T>()
         }
 
         // Check that this value represents the given type, and if so return the bytes.
         // This is a helper for downcasts.
         #[inline]
-        fn check<T: 'static>(self) -> Option<$bytes_type> {
+        fn downcast_with<T: 'static, U, F: FnOnce(Self) -> U>(self, f: F) -> Option<U> {
             if self.is::<T>() {
-                Some(self.bytes)
+                Some(f(self))
             } else {
                 None
             }
@@ -46,21 +49,300 @@ macro_rules! impl_value_base {
     };
 }
 
-#[derive(Clone, Debug)]
+pub(crate) trait HasDrop {
+    fn drop_fn(&self) -> &DropFn;
+}
+
+pub trait HasClone {
+    fn clone_fn(&self) -> &CloneFn;
+    fn clone_from_fn(&self) -> &CloneFromFn;
+}
+
+pub trait HasHash {
+    fn hash_fn(&self) -> &HashFn;
+}
+
+pub trait HasPartialEq {
+    fn eq_fn(&self) -> &EqFn;
+}
+
+pub trait HasDebug {
+    fn fmt_fn(&self) -> &FmtFn;
+}
+
+impl<T> HasDrop for (DropFn, T) {
+    #[inline]
+    fn drop_fn(&self) -> &DropFn { &self.0 }
+}
+
+// Helper trait for dropping bytes in pointer containers.
+pub trait GetBytesMut {
+    fn get_bytes_mut(&mut self) -> Option<&mut [u8]>;
+}
+
+impl GetBytesMut for Box<[u8]> {
+    fn get_bytes_mut(&mut self) -> Option<&mut [u8]> {
+        Some(&mut *self)
+    }
+}
+
+impl GetBytesMut for Rc<[u8]> {
+    fn get_bytes_mut(&mut self) -> Option<&mut [u8]> {
+        Rc::get_mut(self)
+    }
+}
+
+impl GetBytesMut for Arc<[u8]> {
+    fn get_bytes_mut(&mut self) -> Option<&mut [u8]> {
+        Arc::get_mut(self)
+    }
+}
+
+pub struct DynValue<B, V> where B: GetBytesMut {
+    pub(crate) bytes: ManuallyDrop<B>,
+    pub(crate) type_id: TypeId,
+    pub(crate) vtable: Arc<(DropFn, V)>,
+}
+
+type BoxDynValue<V> = DynValue<Box<[u8]>, V>;
+type RcDynValue<V> = DynValue<Rc<[u8]>, V>;
+type ArcDynValue<V> = DynValue<Arc<[u8]>, V>;
+
+impl<V> BoxDynValue<V> {
+    #[inline]
+    pub fn new<T: Any + DropBytes + VTableBuilder<VTable = V>>(value: Box<T>) -> DynValue<Box<[u8]>, V> {
+        DynValue {
+            bytes: ManuallyDrop::new(Bytes::box_into_box_bytes(value)),
+            type_id: TypeId::of::<T>(),
+            vtable: Arc::new((DropFn::new(T::drop_bytes), T::new_vtable()))
+        }
+    }
+}
+impl<V> RcDynValue<V> {
+    #[inline]
+    pub fn new<T: Any + DropBytes + VTableBuilder<VTable = V>>(value: Rc<T>) -> DynValue<Rc<[u8]>, V> {
+        DynValue {
+            bytes: ManuallyDrop::new(Bytes::rc_into_rc_bytes(value)),
+            type_id: TypeId::of::<T>(),
+            vtable: Arc::new((DropFn::new(T::drop_bytes), T::new_vtable()))
+        }
+    }
+}
+impl<V> ArcDynValue<V> {
+    #[inline]
+    pub fn new<T: Any + DropBytes + VTableBuilder<VTable = V>>(value: Arc<T>) -> DynValue<Arc<[u8]>, V> {
+        DynValue {
+            bytes: ManuallyDrop::new(Bytes::arc_into_arc_bytes(value)),
+            type_id: TypeId::of::<T>(),
+            vtable: Arc::new((DropFn::new(T::drop_bytes), T::new_vtable()))
+        }
+    }
+}
+
+impl<B: GetBytesMut + AsRef<[u8]>, V: HasDebug> fmt::Debug for DynValue<B, V> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        unsafe {
+            self.vtable.1.fmt_fn().0(self.bytes.as_ref(), f)
+        }
+    }
+}
+
+
+impl<V: HasClone> Clone for DynValue<Box<[u8]>, V> {
+    #[inline]
+    fn clone(&self) -> DynValue<Box<[u8]>, V> {
+        DynValue {
+            bytes: ManuallyDrop::new(unsafe { self.vtable.1.clone_fn().0(self.bytes.as_ref()) }),
+            type_id: self.type_id,
+            vtable: Arc::clone(&self.vtable),
+        }
+    }
+}
+
+impl<V> Clone for DynValue<Rc<[u8]>, V> {
+    #[inline]
+    fn clone(&self) -> DynValue<Rc<[u8]>, V> {
+        DynValue {
+            bytes: ManuallyDrop::new(Rc::clone(&self.bytes)),
+            type_id: self.type_id,
+            vtable: Arc::clone(&self.vtable),
+        }
+    }
+}
+
+impl<V> Clone for DynValue<Arc<[u8]>, V> {
+    #[inline]
+    fn clone(&self) -> DynValue<Arc<[u8]>, V> {
+        DynValue {
+            bytes: ManuallyDrop::new(Arc::clone(&self.bytes)),
+            type_id: self.type_id,
+            vtable: Arc::clone(&self.vtable),
+        }
+    }
+}
+
+impl<B: GetBytesMut, V> Drop for DynValue<B, V> {
+    #[inline]
+    fn drop(&mut self) {
+        unsafe {
+            // If we have unique access, drop the contents.
+            if let Some(bytes) = self.bytes.get_bytes_mut() {
+                self.vtable.drop_fn().0(bytes)
+            }
+            // Now drop the Rc<[u8]>. This is safe because self will not be used after this.
+            let _ = ManuallyDrop::take(&mut self.bytes);
+        }
+    }
+}
+
+impl<B: GetBytesMut + AsRef<[u8]>, V: HasPartialEq> PartialEq for DynValue<B, V> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        unsafe {
+            self.vtable.1.eq_fn().0(self.bytes.as_ref(), other.bytes.as_ref())
+        }
+    }
+}
+
+impl<B: GetBytesMut + AsRef<[u8]>, V: HasPartialEq> Eq for DynValue<B, V> { }
+
+impl<B: GetBytesMut + AsRef<[u8]>, V: HasHash> Hash for DynValue<B, V> {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        unsafe {
+            self.vtable.1.hash_fn().0(self.bytes.as_ref(), state);
+        }
+    }
+}
+
+pub trait VTableBuilder {
+    type VTable;
+    fn new_vtable() -> Self::VTable;
+}
+
+//#[dyn_trait(vec_dyn_crate_name = "data_buffer")]
+pub trait AllTrait: Clone + PartialEq + Eq + Hash + std::fmt::Debug { }
+
+// Generated
+pub trait AllTraitBytes: CloneBytes + PartialEqBytes + EqBytes + HashBytes + DebugBytes { }
+
+// Generated
+impl<T: AllTraitBytes> VTableBuilder for T {
+    type VTable = AllTraitVTable;
+    fn new_vtable() -> Self::VTable {
+        AllTraitVTable(
+            (CloneFn::new(T::clone_bytes), CloneFromFn::new(T::clone_from_bytes)),
+            EqFn::new(T::eq_bytes),
+            HashFn::new(T::hash_bytes),
+            FmtFn::new(T::fmt_bytes),
+        )
+    }
+}
+
+impl<T> AllTraitBytes for T where T: Clone + PartialEq + Eq + Hash + std::fmt::Debug + 'static { }
+
+// Generated
+pub struct AllTraitVTable(
+    (CloneFn, CloneFromFn),
+    EqFn,
+    HashFn,
+    FmtFn,
+);
+
+// The Has_ traits are automatically generated and allow for builtin traits to be included in the
+// vtable.
+impl HasClone for AllTraitVTable {
+    #[inline]
+    fn clone_fn(&self) -> &CloneFn { &(self.0).0 }
+    #[inline]
+    fn clone_from_fn(&self) -> &CloneFromFn { &(self.0).1 }
+}
+
+impl HasPartialEq for AllTraitVTable {
+    #[inline]
+    fn eq_fn(&self) -> &EqFn { &self.1 }
+}
+
+impl HasHash for AllTraitVTable {
+    #[inline]
+    fn hash_fn(&self) -> &HashFn { &self.2 }
+}
+
+impl HasDebug for AllTraitVTable {
+    #[inline]
+    fn fmt_fn(&self) -> &FmtFn { &self.3 }
+}
+
+// The last trait generates user specific functions. A blanket implementation
+impl<B: GetBytesMut + AsRef<[u8]>> AllTrait for DynValue<B, AllTraitVTable> where Self: Clone { }
+
+impl<B: GetBytesMut + AsRef<[u8]>, V> DynValue<B, V> {
+    impl_value_base!();
+}
+
+impl<V> DynValue<Box<[u8]>, V> {
+    /// Downcast this value reference into a boxed `T` type. Return `None` if the downcast fails.
+    #[inline]
+    pub fn downcast<T: Elem>(self) -> Option<Box<T>> {
+        // This is safe since we check that self.bytes represent a `T`.
+        self.downcast_with::<T, _, _>(|mut s| unsafe {
+            Bytes::box_from_box_bytes(ManuallyDrop::take(&mut s.bytes))
+        })
+    }
+}
+
+impl<V> DynValue<Rc<[u8]>, V> {
+    /// Downcast this value reference into a boxed `T` type. Return `None` if the downcast fails.
+    #[inline]
+    pub fn downcast<T: Elem>(self) -> Option<Rc<T>> {
+        // This is safe since we check that self.bytes represent a `T`.
+        self.downcast_with::<T, _, _>(|mut b| unsafe { Bytes::rc_from_rc_bytes(ManuallyDrop::take(&mut b.bytes)) })
+    }
+}
+
+impl<V> DynValue<Arc<[u8]>, V> {
+    /// Downcast this value reference into a boxed `T` type. Return `None` if the downcast fails.
+    #[inline]
+    pub fn downcast<T: Elem>(self) -> Option<Arc<T>> {
+        // This is safe since we check that self.bytes represent a `T`.
+        self.downcast_with::<T, _, _>(|mut b| unsafe { Bytes::arc_from_arc_bytes(ManuallyDrop::take(&mut b.bytes)) })
+    }
+}
+
+#[derive(Debug)]
 pub struct BoxValue {
-    pub(crate) bytes: Box<[u8]>,
+    pub(crate) bytes: ManuallyDrop<Box<[u8]>>,
     pub(crate) type_id: TypeId,
     pub(crate) clone_fn: CloneFn,
     pub(crate) drop_fn: DropFn,
 }
 
+impl Clone for BoxValue {
+    fn clone(&self) -> BoxValue {
+        BoxValue {
+            bytes: ManuallyDrop::new(unsafe { self.clone_fn.0(self.bytes.as_ref()) }),
+            type_id: self.type_id,
+            clone_fn: self.clone_fn,
+            drop_fn: self.drop_fn,
+        }
+    }
+}
+
+impl Drop for BoxValue {
+    fn drop(&mut self) {
+        unsafe {
+            self.drop_fn.0(&mut *self.bytes);
+        }
+    }
+}
+
 impl BoxValue {
-    impl_value_base!(BoxValue, Box<[u8]>);
+    impl_value_base!();
 
     #[inline]
     pub fn new<T: Elem>(typed: Box<T>) -> BoxValue {
         BoxValue {
-            bytes: Bytes::box_into_box_bytes(typed),
+            bytes: ManuallyDrop::new(Bytes::box_into_box_bytes(typed)),
             type_id: TypeId::of::<T>(),
             clone_fn: CloneFn::new(T::clone_bytes),
             drop_fn: DropFn::new(T::drop_bytes),
@@ -82,28 +364,41 @@ impl BoxValue {
     #[inline]
     pub fn downcast<T: Elem>(self) -> Option<Box<T>> {
         // This is safe since we check that self.bytes represent a `T`.
-        self.check::<T>().map(|b| unsafe { Bytes::box_from_box_bytes(b) })
+        self.downcast_with::<T, _, _>(|mut b| unsafe { Bytes::box_from_box_bytes(ManuallyDrop::take(&mut b.bytes)) })
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct RcValue {
-    pub(crate) bytes: Rc<[u8]>,
+    pub(crate) bytes: ManuallyDrop<Rc<[u8]>>,
     pub(crate) type_id: TypeId,
     pub(crate) drop_fn: DropFn,
     // We don't need a clone function here since cloning an Rc is independent of the value it
     // contains.
 }
 
+impl Drop for RcValue {
+    fn drop(&mut self) {
+        unsafe {
+            // If we have unique access, drop the contents.
+            if let Some(bytes) = Rc::get_mut(&mut self.bytes) {
+                self.drop_fn.0(bytes)
+            }
+            // Now drop the Rc<[u8]>. This is safe because self will not be used after this.
+            let _ = ManuallyDrop::take(&mut self.bytes);
+        }
+    }
+}
+
 impl RcValue {
-    impl_value_base!(RcValue, Rc<[u8]>);
+    impl_value_base!();
 
     #[inline]
-    pub fn new<T: Bytes>(typed: Rc<T>) -> RcValue {
+    pub fn new<T: Bytes + DropBytes>(typed: Rc<T>) -> RcValue {
         RcValue {
-            bytes: Bytes::rc_into_rc_bytes(typed),
+            bytes: ManuallyDrop::new(Bytes::rc_into_rc_bytes(typed)),
             type_id: TypeId::of::<T>(),
-            drop_fn: DropFn::new(Rc::<T>::drop_bytes),
+            drop_fn: DropFn::new(T::drop_bytes),
         }
     }
 
@@ -121,7 +416,7 @@ impl RcValue {
     #[inline]
     pub fn downcast<T: Bytes>(self) -> Option<Rc<T>> {
         // This is safe since we check that self.bytes represent a `T`.
-        self.check::<T>().map(|b| unsafe { Bytes::rc_from_rc_bytes(b) })
+        self.downcast_with::<T, _, _>(|mut b| unsafe { Bytes::rc_from_rc_bytes(ManuallyDrop::take(&mut b.bytes)) })
     }
 }
 
@@ -134,18 +429,31 @@ impl<T: Bytes + 'static> From<Rc<T>> for RcValue {
 
 #[derive(Clone, Debug)]
 pub struct ArcValue {
-    pub(crate) bytes: Arc<[u8]>,
+    pub(crate) bytes: ManuallyDrop<Arc<[u8]>>,
     pub(crate) type_id: TypeId,
     pub(crate) drop_fn: DropFn,
 }
 
+impl Drop for ArcValue {
+    fn drop(&mut self) {
+        unsafe {
+            // If we have unique access, drop the contents.
+            if let Some(bytes) = Arc::get_mut(&mut self.bytes) {
+                self.drop_fn.0(bytes)
+            }
+            // Now drop the Arc<[u8]>. This is safe because self will not be used after this.
+            let _ = ManuallyDrop::take(&mut self.bytes);
+        }
+    }
+}
+
 impl ArcValue {
-    impl_value_base!(ArcValue, Arc<[u8]>);
+    impl_value_base!();
 
     #[inline]
     pub fn new<T: Bytes>(typed: Arc<T>) -> ArcValue {
         ArcValue {
-            bytes: Bytes::arc_into_arc_bytes(typed),
+            bytes: ManuallyDrop::new(Bytes::arc_into_arc_bytes(typed)),
             type_id: TypeId::of::<T>(),
             drop_fn: DropFn::new(Arc::<T>::drop_bytes),
         }
@@ -165,7 +473,7 @@ impl ArcValue {
     #[inline]
     pub fn downcast<T: Bytes>(self) -> Option<Arc<T>> {
         // This is safe since we check that self.bytes represent a `T`.
-        self.check::<T>().map(|b| unsafe { Bytes::arc_from_arc_bytes(b) })
+        self.downcast_with::<T, _, _>(|mut b| unsafe { Bytes::arc_from_arc_bytes(ManuallyDrop::take(&mut b.bytes)) })
     }
 }
 
@@ -184,7 +492,7 @@ pub struct ValueRef<'a> {
 }
 
 impl<'a> ValueRef<'a> {
-    impl_value_base!(ValueRef, &'a [u8]);
+    impl_value_base!();
     
     /// Create a new `ValueRef` from a typed reference.
     #[inline]
@@ -209,7 +517,7 @@ impl<'a> ValueRef<'a> {
     #[inline]
     pub fn downcast<T: Bytes + 'static>(self) -> Option<&'a T> {
         // This is safe since we check that self.bytes represent a `T`.
-        self.check::<T>().map(|b| unsafe { Bytes::from_bytes(b) })
+        self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes(b.bytes) })
     }
 }
 
@@ -221,7 +529,7 @@ pub struct CopyValueRef<'a> {
 }
 
 impl<'a> CopyValueRef<'a> {
-    impl_value_base!(CopyValueRef, &'a [u8]);
+    impl_value_base!();
 
     /// Create a new `CopyValueRef` from a typed reference.
     #[inline]
@@ -246,7 +554,7 @@ impl<'a> CopyValueRef<'a> {
     #[inline]
     pub fn downcast<T: Bytes + Copy + 'static>(self) -> Option<&'a T> {
         // This is safe since we check that self.bytes represent a `T`.
-        self.check::<T>().map(|b| unsafe { Bytes::from_bytes(b) })
+        self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes(b.bytes) })
     }
 }
 
@@ -259,7 +567,7 @@ pub struct ValueMut<'a> {
 }
 
 impl<'a> ValueMut<'a> {
-    impl_value_base!(ValueMut,  &'a mut [u8]);
+    impl_value_base!();
 
     /// Create a new `ValueMut` from a typed mutable reference.
     #[inline]
@@ -292,7 +600,7 @@ impl<'a> ValueMut<'a> {
     /// Swap the values between `other` and `self`.
     #[inline]
     pub fn swap(&mut self, other: &mut ValueMut) {
-        if self.type_id() == other.type_id() {
+        if self.value_type_id() == other.value_type_id() {
             self.bytes.swap_with_slice(other.bytes);
         }
     }
@@ -303,7 +611,7 @@ impl<'a> ValueMut<'a> {
     #[inline]
     pub fn clone_from(&mut self, other: impl Into<ValueRef<'a>>) {
         let other = other.into();
-        if self.type_id() == other.type_id() {
+        if self.value_type_id() == other.value_type_id() {
             unsafe {
                 // We are cloning other.bytes into self.bytes.
                 // This function will call the appropriate typed clone_from function, which will
@@ -317,8 +625,7 @@ impl<'a> ValueMut<'a> {
     #[inline]
     pub fn downcast<T: Elem>(self) -> Option<&'a mut T> {
         // This is safe since we check that self.bytes represent a `T`.
-        self.check::<T>()
-            .map(|b| unsafe { Bytes::from_bytes_mut(b) })
+        self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes_mut(b.bytes) })
     }
 }
 
@@ -330,7 +637,7 @@ pub struct CopyValueMut<'a> {
 }
 
 impl<'a> CopyValueMut<'a> {
-    impl_value_base!(CopyValueMut,  &'a mut [u8]);
+    impl_value_base!();
 
     /// Create a new `CopyValueMut` from a typed mutable reference.
     #[inline]
@@ -356,7 +663,7 @@ impl<'a> CopyValueMut<'a> {
     /// This function returns `None` if the values have different types.
     #[inline]
     pub fn copy(self, other: CopyValueRef<'a>) -> Option<Self> {
-        if self.type_id() == other.type_id() {
+        if self.value_type_id() == other.value_type_id() {
             self.bytes.copy_from_slice(other.bytes);
             Some(self)
         } else {
@@ -367,7 +674,7 @@ impl<'a> CopyValueMut<'a> {
     /// Swap the values between `other` and `self`.
     #[inline]
     pub fn swap(&mut self, other: &mut CopyValueMut) {
-        if self.type_id() == other.type_id() {
+        if self.value_type_id() == other.value_type_id() {
             self.bytes.swap_with_slice(&mut other.bytes);
             std::mem::swap(&mut self.type_id, &mut other.type_id);
         }
@@ -377,8 +684,7 @@ impl<'a> CopyValueMut<'a> {
     #[inline]
     pub fn downcast<T: Bytes + Copy + 'static>(self) -> Option<&'a mut T> {
         // This is safe since we check that self.bytes represent a `T`.
-        self.check::<T>()
-            .map(|b| unsafe { Bytes::from_bytes_mut(b) })
+        self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes_mut(b.bytes) })
     }
 }
 

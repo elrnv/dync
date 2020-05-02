@@ -25,8 +25,10 @@ use num_traits::{cast, NumCast, Zero};
 
 pub mod macros;
 mod bytes;
+mod traits;
 mod value;
 mod vec_clone;
+mod vec_dyn;
 
 #[cfg(feature = "serde")]
 pub(crate) mod serde_helpers {
@@ -52,6 +54,7 @@ pub(crate) mod serde_helpers {
 pub use bytes::*;
 pub use value::*;
 pub use vec_clone::*;
+pub use vec_dyn::*;
 
 /// Buffer of plain old data. The data is stored as an array of bytes (`Vec<u8>`).
 ///
@@ -565,7 +568,7 @@ impl VecCopy {
     #[inline]
     pub fn push_value(&mut self, value: CopyValueRef) -> Option<&mut Self> {
         assert_eq!(value.size(), self.element_size());
-        if value.type_id() == self.element_type_id() {
+        if value.value_type_id() == self.element_type_id() {
             self.data.extend_from_slice(value.bytes);
             Some(self)
         } else {
@@ -620,7 +623,7 @@ impl<'a> std::iter::FromIterator<CopyValueRef<'a>> for VecCopy {
         let mut buf = VecCopy {
             data,
             element_size: next.size(),
-            element_type_id: next.type_id(),
+            element_type_id: next.value_type_id(),
         };
         buf.extend(iter);
         buf
@@ -632,7 +635,7 @@ impl<'a> Extend<CopyValueRef<'a>> for VecCopy {
     fn extend<T: IntoIterator<Item = CopyValueRef<'a>>>(&mut self, iter: T) {
         for value in iter {
             assert_eq!(value.size(), self.element_size());
-            assert_eq!(value.type_id(), self.element_type_id());
+            assert_eq!(value.value_type_id(), self.element_type_id());
             self.data.extend_from_slice(value.bytes);
         }
     }
