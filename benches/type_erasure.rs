@@ -3,7 +3,7 @@ use std::any::Any;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::prelude::*;
 
-use data_buffer::{VecClone, VecCopy, VecDyn, VTableBuilder, HasClone};
+use data_buffer::{VecClone, VecCopy, VecDyn, Dyn, HasClone};
 
 static SEED: [u8; 32] = [3; 32];
 
@@ -39,7 +39,7 @@ fn make_random_vec_clone(n: usize) -> VecClone {
 }
 
 #[inline]
-fn make_random_vec_dyn(n: usize) -> VecDyn<<[i64;3] as VTableBuilder>::VTable> {
+fn make_random_vec_dyn(n: usize) -> VecDyn<<[i64; 3] as Dyn>::VTable> {
     let mut rng: StdRng = SeedableRng::from_seed(SEED);
     let vec: Vec<_> = (0..n).map(move |_| [rng.gen::<i64>(); 3]).collect();
     vec.into()

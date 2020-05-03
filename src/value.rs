@@ -110,31 +110,31 @@ type ArcDynValue<V> = DynValue<Arc<[u8]>, V>;
 
 impl<V> BoxDynValue<V> {
     #[inline]
-    pub fn new<T: Any + DropBytes + VTableBuilder<VTable = V>>(value: Box<T>) -> DynValue<Box<[u8]>, V> {
+    pub fn new<T: Any + DropBytes + Dyn<VTable = V>>(value: Box<T>) -> DynValue<Box<[u8]>, V> {
         DynValue {
             bytes: ManuallyDrop::new(Bytes::box_into_box_bytes(value)),
             type_id: TypeId::of::<T>(),
-            vtable: Arc::new((DropFn::new(T::drop_bytes), T::new_vtable()))
+            vtable: Arc::new((DropFn::new(T::drop_bytes), T::build_vtable()))
         }
     }
 }
 impl<V> RcDynValue<V> {
     #[inline]
-    pub fn new<T: Any + DropBytes + VTableBuilder<VTable = V>>(value: Rc<T>) -> DynValue<Rc<[u8]>, V> {
+    pub fn new<T: Any + DropBytes + Dyn<VTable = V>>(value: Rc<T>) -> DynValue<Rc<[u8]>, V> {
         DynValue {
             bytes: ManuallyDrop::new(Bytes::rc_into_rc_bytes(value)),
             type_id: TypeId::of::<T>(),
-            vtable: Arc::new((DropFn::new(T::drop_bytes), T::new_vtable()))
+            vtable: Arc::new((DropFn::new(T::drop_bytes), T::build_vtable()))
         }
     }
 }
 impl<V> ArcDynValue<V> {
     #[inline]
-    pub fn new<T: Any + DropBytes + VTableBuilder<VTable = V>>(value: Arc<T>) -> DynValue<Arc<[u8]>, V> {
+    pub fn new<T: Any + DropBytes + Dyn<VTable = V>>(value: Arc<T>) -> DynValue<Arc<[u8]>, V> {
         DynValue {
             bytes: ManuallyDrop::new(Bytes::arc_into_arc_bytes(value)),
             type_id: TypeId::of::<T>(),
-            vtable: Arc::new((DropFn::new(T::drop_bytes), T::new_vtable()))
+            vtable: Arc::new((DropFn::new(T::drop_bytes), T::build_vtable()))
         }
     }
 }
@@ -215,66 +215,21 @@ impl<B: GetBytesMut + AsRef<[u8]>, V: HasHash> Hash for DynValue<B, V> {
     }
 }
 
-pub trait VTableBuilder {
+/// `Dyn` defines a type that can be converted into a virtual function table.
+///
+/// This is different than a type that can be turned into a trait object like `Box<dyn Any>`
+/// because it decouples the type's behavior from the data it contains.
+///
+/// This mechanism allows the virtual function table to be attached to a homogeneous container, to
+/// prevent storing duplicates of these tables for each type instance stored in the container.
+///
+/// This is precisely how it is used to build `VecDyn<V>`, which is generic over the virtual table
+/// rather than the type itself.
+pub trait Dyn {
     type VTable;
-    fn new_vtable() -> Self::VTable;
+    fn build_vtable() -> Self::VTable;
 }
 
-//#[dyn_trait(vec_dyn_crate_name = "data_buffer")]
-pub trait AllTrait: Clone + PartialEq + Eq + Hash + std::fmt::Debug { }
-
-// Generated
-pub trait AllTraitBytes: CloneBytes + PartialEqBytes + EqBytes + HashBytes + DebugBytes { }
-
-// Generated
-impl<T: AllTraitBytes> VTableBuilder for T {
-    type VTable = AllTraitVTable;
-    fn new_vtable() -> Self::VTable {
-        AllTraitVTable(
-            (CloneFn::new(T::clone_bytes), CloneFromFn::new(T::clone_from_bytes)),
-            EqFn::new(T::eq_bytes),
-            HashFn::new(T::hash_bytes),
-            FmtFn::new(T::fmt_bytes),
-        )
-    }
-}
-
-impl<T> AllTraitBytes for T where T: Clone + PartialEq + Eq + Hash + std::fmt::Debug + 'static { }
-
-// Generated
-pub struct AllTraitVTable(
-    (CloneFn, CloneFromFn),
-    EqFn,
-    HashFn,
-    FmtFn,
-);
-
-// The Has_ traits are automatically generated and allow for builtin traits to be included in the
-// vtable.
-impl HasClone for AllTraitVTable {
-    #[inline]
-    fn clone_fn(&self) -> &CloneFn { &(self.0).0 }
-    #[inline]
-    fn clone_from_fn(&self) -> &CloneFromFn { &(self.0).1 }
-}
-
-impl HasPartialEq for AllTraitVTable {
-    #[inline]
-    fn eq_fn(&self) -> &EqFn { &self.1 }
-}
-
-impl HasHash for AllTraitVTable {
-    #[inline]
-    fn hash_fn(&self) -> &HashFn { &self.2 }
-}
-
-impl HasDebug for AllTraitVTable {
-    #[inline]
-    fn fmt_fn(&self) -> &FmtFn { &self.3 }
-}
-
-// The last trait generates user specific functions. A blanket implementation
-impl<B: GetBytesMut + AsRef<[u8]>> AllTrait for DynValue<B, AllTraitVTable> where Self: Clone { }
 
 impl<B: GetBytesMut + AsRef<[u8]>, V> DynValue<B, V> {
     impl_value_base!();

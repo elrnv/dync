@@ -56,12 +56,12 @@ impl<V> Drop for VecDyn<V> {
 impl<V> VecDyn<V> {
     /// Construct an empty vector with a specific pointed-to element type.
     #[inline]
-    pub fn with_type<T: Elem + VTableBuilder<VTable = V>>() -> Self {
+    pub fn with_type<T: Elem + Dyn<VTable = V>>() -> Self {
         VecDyn {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::with_type_non_copy::<T>() }),
-            vtable: Arc::new((DropFn::new(T::drop_bytes), T::new_vtable()))
+            vtable: Arc::new((DropFn::new(T::drop_bytes), T::build_vtable()))
         }
     }
 
@@ -76,23 +76,23 @@ impl<V> VecDyn<V> {
 
     /// Construct an empty vector with a capacity for a given number of typed pointed-to elements.
     #[inline]
-    pub fn with_capacity<T: Elem + VTableBuilder<VTable = V>>(n: usize) -> Self {
+    pub fn with_capacity<T: Elem + Dyn<VTable = V>>(n: usize) -> Self {
         VecDyn {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new( unsafe { VecCopy::with_capacity_non_copy::<T>(n) }),
-            vtable: Arc::new((DropFn::new(T::drop_bytes), T::new_vtable()))
+            vtable: Arc::new((DropFn::new(T::drop_bytes), T::build_vtable()))
         }
     }
 
     /// Construct a `VecDyn` from a given `Vec` reusing the space already allocated by the given
     /// vector.
-    pub fn from_vec<T: Elem + VTableBuilder<VTable = V>>(vec: Vec<T>) -> Self {
+    pub fn from_vec<T: Elem + Dyn<VTable = V>>(vec: Vec<T>) -> Self {
         VecDyn {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_vec_non_copy(vec) }),
-            vtable: Arc::new((DropFn::new(T::drop_bytes), T::new_vtable()))
+            vtable: Arc::new((DropFn::new(T::drop_bytes), T::build_vtable()))
         }
     }
 
@@ -312,23 +312,23 @@ impl<V: HasClone> VecDyn<V> {
     /// Construct a typed `DataBuffer` with a given size and filled with the specified default
     /// value.
     #[inline]
-    pub fn with_size<T: Elem + Clone + VTableBuilder<VTable = V>>(n: usize, def: T) -> Self {
+    pub fn with_size<T: Elem + Clone + Dyn<VTable = V>>(n: usize, def: T) -> Self {
         VecDyn {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_vec_non_copy(vec![def; n]) }),
-            vtable: Arc::new((DropFn::new(T::drop_bytes), T::new_vtable()))
+            vtable: Arc::new((DropFn::new(T::drop_bytes), T::build_vtable()))
         }
     }
 
     /// Construct a buffer from a given slice by cloning the data.
     #[inline]
-    pub fn from_slice<T: Elem + Clone + VTableBuilder<VTable = V>>(slice: &[T]) -> Self {
+    pub fn from_slice<T: Elem + Clone + Dyn<VTable = V>>(slice: &[T]) -> Self {
         VecDyn {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_slice_non_copy::<T>(slice) }),
-            vtable: Arc::new((DropFn::new(T::drop_bytes), T::new_vtable()))
+            vtable: Arc::new((DropFn::new(T::drop_bytes), T::build_vtable()))
         }
     }
 
@@ -441,7 +441,7 @@ impl<V: HasClone> VecDyn<V> {
 }
 
 /// Convert a `Vec` to a buffer.
-impl<T: Elem + VTableBuilder> From<Vec<T>> for VecDyn<T::VTable> {
+impl<T: Elem + Dyn> From<Vec<T>> for VecDyn<T::VTable> {
     #[inline]
     fn from(vec: Vec<T>) -> VecDyn<T::VTable> {
         VecDyn::from_vec(vec)
@@ -450,7 +450,7 @@ impl<T: Elem + VTableBuilder> From<Vec<T>> for VecDyn<T::VTable> {
 
 /// Convert a slice to a `VecDyn`.
 impl<'a, T> From<&'a [T]> for VecDyn<T::VTable>
-where T: Elem + Clone + VTableBuilder,
+where T: Elem + Clone + Dyn,
       T::VTable: HasClone,
 {
     #[inline]
@@ -472,6 +472,62 @@ mod tests {
     use super::*;
     use std::mem::size_of;
     use std::rc::Rc;
+
+    //#[dyn_trait(suffix = "Bytes", dyn_crate_name = "dyn")]
+    pub trait AllTrait: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug { }
+
+    // Generated
+    pub trait AllTraitBytes: CloneBytes + PartialEqBytes + EqBytes + HashBytes + DebugBytes { }
+
+    // Generated
+    impl<T: AllTraitBytes> Dyn for T {
+        type VTable = AllTraitVTable;
+        fn build_vtable() -> Self::VTable {
+            AllTraitVTable(
+                (CloneFn::new(T::clone_bytes), CloneFromFn::new(T::clone_from_bytes)),
+                EqFn::new(T::eq_bytes),
+                HashFn::new(T::hash_bytes),
+                FmtFn::new(T::fmt_bytes),
+            )
+        }
+    }
+
+    impl<T> AllTraitBytes for T where T: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug + 'static { }
+
+    // Generated
+    pub struct AllTraitVTable(
+        (CloneFn, CloneFromFn),
+        EqFn,
+        HashFn,
+        FmtFn,
+    );
+
+    // The Has_ traits are automatically generated and allow for builtin traits to be included in the
+    // vtable.
+    impl HasClone for AllTraitVTable {
+        #[inline]
+        fn clone_fn(&self) -> &CloneFn { &(self.0).0 }
+        #[inline]
+        fn clone_from_fn(&self) -> &CloneFromFn { &(self.0).1 }
+    }
+
+    impl HasPartialEq for AllTraitVTable {
+        #[inline]
+        fn eq_fn(&self) -> &EqFn { &self.1 }
+    }
+
+    impl HasHash for AllTraitVTable {
+        #[inline]
+        fn hash_fn(&self) -> &HashFn { &self.2 }
+    }
+
+    impl HasDebug for AllTraitVTable {
+        #[inline]
+        fn fmt_fn(&self) -> &FmtFn { &self.3 }
+    }
+
+    // The last trait generates user specific functions. A blanket implementation
+    impl<B: GetBytesMut + AsRef<[u8]>> AllTrait for DynValue<B, AllTraitVTable> where Self: Clone { }
 
     #[test]
     fn clone_from_test() {

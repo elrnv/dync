@@ -8,28 +8,41 @@ use crate::bytes::*;
 use std::hash::{Hash, Hasher};
 use std::mem::ManuallyDrop;
 use std::fmt;
+use dyn_derive::dyn_trait_method;
 
 pub trait CloneBytes: Clone {
-    unsafe fn clone_bytes(src: &[u8]) -> Box<[u8]>;
-    unsafe fn clone_from_bytes(dst: &mut [u8], src: &[u8]);
+    #[dyn_trait_method]
+    fn clone(&self) -> Self;
+    //unsafe fn clone_bytes(src: &[u8]) -> Box<[u8]>;
+    #[dyn_trait_method]
+    fn clone_from(&mut self, src: &Self);
+    //unsafe fn clone_from_bytes(dst: &mut [u8], src: &[u8]);
 }
 
 pub trait DropBytes {
-    unsafe fn drop_bytes(bytes: &mut [u8]);
+    #[dyn_trait_method]
+    fn drop(&mut self);
+    //unsafe fn drop_bytes(bytes: &mut [u8]);
 }
 
 pub trait PartialEqBytes: PartialEq {
-    unsafe fn eq_bytes(a: &[u8], b: &[u8]) -> bool;
+    #[dyn_trait_method]
+    fn eq(&self, other: &Self) -> bool;
+    //unsafe fn eq_bytes(a: &[u8], b: &[u8]) -> bool;
 }
 
 pub trait EqBytes: PartialEqBytes + Eq { }
 
 pub trait HashBytes: Hash {
-    unsafe fn hash_bytes(bytes: &[u8], state: &mut dyn Hasher);
+    #[dyn_trait_method]
+    fn hash<H: Hasher>(&self, state: &mut H);
+    //unsafe fn hash_bytes(bytes: &[u8], state: &mut dyn Hasher);
 }
 
 pub trait DebugBytes: fmt::Debug {
-    unsafe fn fmt_bytes(bytes: &[u8], f: &mut fmt::Formatter) -> Result<(), fmt::Error>;
+    #[dyn_trait_method]
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error>;
+    //unsafe fn fmt_bytes(bytes: &[u8], f: &mut fmt::Formatter) -> Result<(), fmt::Error>;
 }
 
 impl<T: Clone + Bytes> CloneBytes for T {

@@ -1,0 +1,19 @@
+[package]
+name = "dyn-derive"
+version = "0.1.0"
+authors = ["Egor Larionov <egor.larionov@gmail.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+description = "Derive macros for dynamic trait objects"
+
+homepage = "https://github.com/elrnv/buffer"
+repository = "https://github.com/elrnv/buffer"
+keywords = ["buffer", "io", "data"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "1.0", features = ["full", "extra-traits"] }
+quote = "1.0"
+proc-macro2 = "1.0"

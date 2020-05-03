@@ -16,6 +16,7 @@ keywords = ["buffer", "io", "data"]
 travis-ci = { repository = "elrnv/buffer", branch = "master" }
 
 [dependencies]
+dyn-derive = { path = "dyn-derive", version = "0.1" }
 reinterpret = "0.2"
 num-traits = { version = "0.2", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
