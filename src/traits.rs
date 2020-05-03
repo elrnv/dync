@@ -8,7 +8,11 @@ use crate::bytes::*;
 use std::hash::{Hash, Hasher};
 use std::mem::ManuallyDrop;
 use std::fmt;
-use dyn_derive::dyn_trait_method;
+use dyn_derive::{dyn_trait_method};
+
+pub trait DropBytes {
+    unsafe fn drop_bytes(bytes: &mut [u8]);
+}
 
 pub trait CloneBytes: Clone {
     #[dyn_trait_method]
@@ -17,12 +21,6 @@ pub trait CloneBytes: Clone {
     #[dyn_trait_method]
     fn clone_from(&mut self, src: &Self);
     //unsafe fn clone_from_bytes(dst: &mut [u8], src: &[u8]);
-}
-
-pub trait DropBytes {
-    #[dyn_trait_method]
-    fn drop(&mut self);
-    //unsafe fn drop_bytes(bytes: &mut [u8]);
 }
 
 pub trait PartialEqBytes: PartialEq {
@@ -45,6 +43,14 @@ pub trait DebugBytes: fmt::Debug {
     //unsafe fn fmt_bytes(bytes: &[u8], f: &mut fmt::Formatter) -> Result<(), fmt::Error>;
 }
 
+impl<T: Bytes> DropBytes for T {
+    #[inline]
+    unsafe fn drop_bytes(bytes: &mut [u8]) {
+        let md: &mut ManuallyDrop<T> = Bytes::from_bytes_mut(bytes);
+        ManuallyDrop::drop(md);
+    }
+}
+
 impl<T: Clone + Bytes> CloneBytes for T {
     #[inline]
     unsafe fn clone_bytes(src: &[u8]) -> Box<[u8]> {
@@ -56,14 +62,6 @@ impl<T: Clone + Bytes> CloneBytes for T {
         let typed_src: &T = Bytes::from_bytes(src);
         let typed_dst: &mut T = Bytes::from_bytes_mut(dst);
         typed_dst.clone_from(typed_src);
-    }
-}
-
-impl<T: Bytes> DropBytes for T {
-    #[inline]
-    unsafe fn drop_bytes(bytes: &mut [u8]) {
-        let md: &mut ManuallyDrop<T> = Bytes::from_bytes_mut(bytes);
-        ManuallyDrop::drop(md);
     }
 }
 
@@ -95,10 +93,10 @@ impl<T: Bytes + fmt::Debug> DebugBytes for T {
 
 pub(crate) type CloneFnType = unsafe fn(&[u8]) -> Box<[u8]>;
 pub(crate) type CloneFromFnType = unsafe fn(&mut [u8], &[u8]);
-pub(crate) type DropFnType = unsafe fn(&mut [u8]);
 pub(crate) type EqFnType = unsafe fn(&[u8], &[u8]) -> bool;
 pub(crate) type HashFnType = unsafe fn(&[u8], &mut dyn Hasher);
 pub(crate) type FmtFnType = unsafe fn (&[u8], &mut fmt::Formatter) -> Result<(), fmt::Error>;
+pub(crate) type DropFnType = unsafe fn(&mut [u8]);
 
 macro_rules! impl_fn_wrapper {
     (derive() struct $fn:ident ( $fn_type:ident )) => {
@@ -113,11 +111,11 @@ macro_rules! impl_fn_wrapper {
         impl_fn_wrapper!(@impls $fn ( $fn_type ));
     };
     (@impls $fn:ident ( $fn_type:ident )) => {
-        impl $fn {
-            pub fn new(f: $fn_type) -> Self {
-                $fn(f)
-            }
-        }
+        //impl $fn {
+        //    pub fn new(f: $fn_type) -> Self {
+        //        $fn(f)
+        //    }
+        //}
 
         impl fmt::Debug for $fn {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -142,7 +140,7 @@ macro_rules! impl_fn_wrapper {
 
 impl_fn_wrapper!(derive(Copy, Clone) struct CloneFn(CloneFnType));
 impl_fn_wrapper!(derive(Copy, Clone) struct CloneFromFn(CloneFromFnType));
-impl_fn_wrapper!(derive(Copy, Clone) struct DropFn(DropFnType));
 impl_fn_wrapper!(derive(Copy, Clone) struct EqFn(EqFnType));
 impl_fn_wrapper!(derive(Copy, Clone) struct HashFn(HashFnType));
 impl_fn_wrapper!(derive(Copy, Clone) struct FmtFn(FmtFnType));
+impl_fn_wrapper!(derive(Copy, Clone) struct DropFn(DropFnType));

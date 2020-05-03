@@ -1,3 +1,7 @@
+//! This module deals with conversions of types between bytes.
+//! For reference on potential pitfals here are two articles:
+//! - [Safe trasmute proposal](https://internals.rust-lang.org/t/pre-rfc-safe-transmute/11347)
+//! - [Notes on Type Layouts aand ABIs in Rust](https://gankra.github.io/blah/rust-layouts-and-abis/)
 use std::mem::size_of;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -134,5 +138,15 @@ where
     }
 }
 
+// This is of course wilidly unsafe, but it makes the tests compile for now.
 impl<T> Bytes for T where T: 'static {}
 
+pub unsafe trait IntoRaw<T>: Sized {
+    /// Performs conversion into a raw type `T`.
+    fn into_raw(self) -> T;
+}
+
+pub unsafe trait FromRaw<T>: Sized {
+    /// Performs conversion from a raw type `T` into `Self`.
+    fn from_raw(_: T) -> Self;
+}

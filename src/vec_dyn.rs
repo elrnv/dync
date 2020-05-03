@@ -14,6 +14,7 @@ use crate::VecCopy;
 pub trait Elem: Any + Bytes + DropBytes {}
 impl<T> Elem for T where T: Any + Bytes + DropBytes {}
 
+/// This container is a WIP, not to be used in production.
 #[derive(Hash)]
 pub struct VecDyn<V> {
     data: ManuallyDrop<VecCopy>,
@@ -33,7 +34,7 @@ impl<V: HasClone> Clone for VecDyn<V> {
             self.data
                 .byte_chunks()
                 .zip(new_data.chunks_exact_mut(self.data.element_size()))
-                .for_each(|(src, dst)| unsafe { self.vtable.1.clone_from_fn().0(dst, src) });
+                .for_each(|(src, dst)| unsafe { self.vtable.1.clone_from_fn()(dst, src) });
             new_data
         };
         VecDyn {
@@ -61,7 +62,7 @@ impl<V> VecDyn<V> {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::with_type_non_copy::<T>() }),
-            vtable: Arc::new((DropFn::new(T::drop_bytes), T::build_vtable()))
+            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
         }
     }
 
@@ -81,7 +82,7 @@ impl<V> VecDyn<V> {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new( unsafe { VecCopy::with_capacity_non_copy::<T>(n) }),
-            vtable: Arc::new((DropFn::new(T::drop_bytes), T::build_vtable()))
+            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
         }
     }
 
@@ -92,7 +93,7 @@ impl<V> VecDyn<V> {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_vec_non_copy(vec) }),
-            vtable: Arc::new((DropFn::new(T::drop_bytes), T::build_vtable()))
+            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
         }
     }
 
@@ -295,15 +296,15 @@ impl<V> VecDyn<V> {
     /// As a result, this type of iteration is typically less efficient if a typed value is
     /// needed for each element.
     #[inline]
-    pub fn iter_value_ref<'a>(&'a self) -> impl Iterator<Item = ValueRef<'a>> + 'a {
-        let &Self { ref data, .. } = self;
+    pub fn iter_value_ref<'a>(&'a self) -> impl Iterator<Item = DynValueRef<'a, V>> + 'a {
+        let &Self { ref data, ref vtable } = self;
         let VecCopy {
             data,
             element_size,
             element_type_id,
         } = &**data;
         data.chunks_exact(*element_size)
-            .map(move |bytes| unsafe { ValueRef::from_raw_parts(bytes, *element_type_id) })
+            .map(move |bytes| unsafe { DynValueRef::from_raw_parts(bytes, *element_type_id, Arc::clone(vtable)) })
     }
 }
 
@@ -317,7 +318,7 @@ impl<V: HasClone> VecDyn<V> {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_vec_non_copy(vec![def; n]) }),
-            vtable: Arc::new((DropFn::new(T::drop_bytes), T::build_vtable()))
+            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
         }
     }
 
@@ -328,7 +329,7 @@ impl<V: HasClone> VecDyn<V> {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_slice_non_copy::<T>(slice) }),
-            vtable: Arc::new((DropFn::new(T::drop_bytes), T::build_vtable()))
+            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
         }
     }
 
@@ -472,62 +473,11 @@ mod tests {
     use super::*;
     use std::mem::size_of;
     use std::rc::Rc;
+    use dyn_derive::dyn_trait;
 
-    //#[dyn_trait(suffix = "Bytes", dyn_crate_name = "dyn")]
+    #[dyn_trait(suffix = "VTable", dyn_crate_name = "crate")]
     pub trait AllTrait: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug { }
-
-    // Generated
-    pub trait AllTraitBytes: CloneBytes + PartialEqBytes + EqBytes + HashBytes + DebugBytes { }
-
-    // Generated
-    impl<T: AllTraitBytes> Dyn for T {
-        type VTable = AllTraitVTable;
-        fn build_vtable() -> Self::VTable {
-            AllTraitVTable(
-                (CloneFn::new(T::clone_bytes), CloneFromFn::new(T::clone_from_bytes)),
-                EqFn::new(T::eq_bytes),
-                HashFn::new(T::hash_bytes),
-                FmtFn::new(T::fmt_bytes),
-            )
-        }
-    }
-
-    impl<T> AllTraitBytes for T where T: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug + 'static { }
-
-    // Generated
-    pub struct AllTraitVTable(
-        (CloneFn, CloneFromFn),
-        EqFn,
-        HashFn,
-        FmtFn,
-    );
-
-    // The Has_ traits are automatically generated and allow for builtin traits to be included in the
-    // vtable.
-    impl HasClone for AllTraitVTable {
-        #[inline]
-        fn clone_fn(&self) -> &CloneFn { &(self.0).0 }
-        #[inline]
-        fn clone_from_fn(&self) -> &CloneFromFn { &(self.0).1 }
-    }
-
-    impl HasPartialEq for AllTraitVTable {
-        #[inline]
-        fn eq_fn(&self) -> &EqFn { &self.1 }
-    }
-
-    impl HasHash for AllTraitVTable {
-        #[inline]
-        fn hash_fn(&self) -> &HashFn { &self.2 }
-    }
-
-    impl HasDebug for AllTraitVTable {
-        #[inline]
-        fn fmt_fn(&self) -> &FmtFn { &self.3 }
-    }
-
-    // The last trait generates user specific functions. A blanket implementation
-    impl<B: GetBytesMut + AsRef<[u8]>> AllTrait for DynValue<B, AllTraitVTable> where Self: Clone { }
+    impl<T> AllTrait for T where T: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug { }
 
     #[test]
     fn clone_from_test() {
@@ -535,16 +485,16 @@ mod tests {
         //use std::rc::Rc;
 
         //// Let's create a collection of `Rc`s.
-        //let vec_rc: Vec<_> = vec![1.0_f32, 23.0, 0.01, 42.0, 23.0, 1.0]
+        //let vec_rc: Vec<_> = vec![1, 23, 2, 42, 23, 1, 135346534653]
         //    .into_iter()
         //    .map(Rc::new)
         //    .collect();
         //let buf = VecDyn::from(vec_rc.clone()); // Clone into VecDyn
 
         //// Construct a hashset of unique values from the VecDyn.
-        //let mut hashset: HashSet<RcValue> = HashSet::new();
+        //let mut hashset: HashSet<RcDynValue<AllTraitVTable>> = HashSet::new();
 
-        //for rc in vec_rc.iter().take(4) {
+        //for rc in buf.iter_value_ref().take(4) {
         //    assert!(hashset.insert(Rc::clone(rc).into()));
         //}
 
@@ -552,36 +502,36 @@ mod tests {
         //assert!(!hashset.insert(Rc::clone(&vec_rc[5]).into()));
 
         //assert_eq!(hashset.len(), 4);
-        //assert!(hashset.contains(&Rc::new(1.0f32).into()));
-        //assert!(hashset.contains(&Rc::new(23.0f32).into()));
-        //assert!(hashset.contains(&Rc::new(0.01f32).into()));
-        //assert!(hashset.contains(&Rc::new(42.0f32).into()));
+        //assert!(hashset.contains(&Rc::new(1).into()));
+        //assert!(hashset.contains(&Rc::new(23).into()));
+        //assert!(hashset.contains(&Rc::new(2).into()));
+        //assert!(hashset.contains(&Rc::new(42).into()));
         //assert!(!hashset.contains(&Rc::new(42.0).into()));
     }
 
-    #[test]
-    fn iter_value_ref() {
-        use std::rc::Rc;
-        let vec: Vec<_> = vec![1, 23, 2, 42, 11]
-            .into_iter()
-            .map(Rc::new)
-            .collect();
-        {
-            let buf = VecDyn::from(vec.clone()); // Convert into buffer
-            let orig = Rc::new(100);
-            let mut rc = Rc::clone(&orig);
-            assert_eq!(Rc::strong_count(&rc), 2);
-            for val in buf.iter_value_ref() {
-                ValueMut::new(&mut rc).clone_from(val);
-            }
-            assert_eq!(Rc::strong_count(&orig), 1);
-            assert_eq!(Rc::strong_count(&rc), 3);
-            assert_eq!(Rc::strong_count(&vec[4]), 3);
-            assert!(vec.iter().take(4).all(|x| Rc::strong_count(x) == 2));
-            assert_eq!(rc, Rc::new(11));
-        }
-        assert!(vec.iter().all(|x| Rc::strong_count(x) == 1));
-    }
+    //#[test]
+    //fn iter_value_ref() {
+    //    use std::rc::Rc;
+    //    let vec: Vec<_> = vec![1, 23, 2, 42, 11]
+    //        .into_iter()
+    //        .map(Rc::new)
+    //        .collect();
+    //    {
+    //        let buf = VecDyn::from(vec.clone()); // Convert into buffer
+    //        let orig = Rc::new(100);
+    //        let mut rc = Rc::clone(&orig);
+    //        assert_eq!(Rc::strong_count(&rc), 2);
+    //        for val in buf.iter_value_ref() {
+    //            ValueMut::new(&mut rc).clone_from(val);
+    //        }
+    //        assert_eq!(Rc::strong_count(&orig), 1);
+    //        assert_eq!(Rc::strong_count(&rc), 3);
+    //        assert_eq!(Rc::strong_count(&vec[4]), 3);
+    //        assert!(vec.iter().take(4).all(|x| Rc::strong_count(x) == 2));
+    //        assert_eq!(rc, Rc::new(11));
+    //    }
+    //    assert!(vec.iter().all(|x| Rc::strong_count(x) == 1));
+    //}
 
     /// Test various ways to create a `VecDyn`.
     #[test]

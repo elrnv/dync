@@ -1,23 +1,261 @@
-use proc_macro2::Span;
-use quote::quote;
+use proc_macro2::{Span, TokenStream};
+use quote::{quote, TokenStreamExt};
 use std::collections::HashMap;
+use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::*;
 
 type GenericsMap = HashMap<Ident, Punctuated<TypeParamBound, Token![+]>>;
 
-//#[proc_macro_attribute]
-//pub fn dyn_trait(
-//    _attr: proc_macro::TokenStream,
-//    item: proc_macro::TokenStream,
-//) -> proc_macro::TokenStream {
-//    let item_trait: ItemTrait =
-//        syn::parse(item).expect("the dyn_trait attribute applies only to trait definitions");
-//
-//    //let item_trait = include_fns_for_known_supertraits(item_trait) {
-//    //}
-//    item_trait.into()
-//}
+#[derive(Debug)]
+struct Config {
+    dyn_crate_name: String,
+    suffix: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            dyn_crate_name: String::from("dyn"),
+            suffix: String::from("Bytes"),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DynAttrib {
+    ident: Ident,
+    eq: Option<Token![=]>,
+    value: Option<Lit>,
+}
+
+impl Parse for DynAttrib {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let ident = input.parse()?;
+        let eq = input.parse()?;
+        let value = input.parse()?;
+        Ok(DynAttrib { ident, eq, value })
+    }
+}
+
+impl Parse for Config {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let mut config = Config::default();
+        let attribs: Punctuated<DynAttrib, Token![,]> =
+            Punctuated::parse_separated_nonempty(input)?;
+        for attrib in attribs.iter() {
+            let name = attrib.ident.to_string();
+            match (name.as_str(), &attrib.value) {
+                ("dyn_crate_name", Some(Lit::Str(ref lit))) => {
+                    config.dyn_crate_name = lit.value().clone()
+                }
+                ("suffix", Some(Lit::Str(ref lit))) => config.suffix = lit.value().clone(),
+                _ => {}
+            }
+        }
+        Ok(config)
+    }
+}
+
+#[proc_macro_attribute]
+pub fn dyn_trait(
+    attr: proc_macro::TokenStream,
+    item: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    let config: Config = syn::parse(attr).expect("Failed to parse attributes");
+
+    let item_trait: ItemTrait =
+        syn::parse(item).expect("the dyn_trait attribute applies only to trait definitions");
+
+    let dyn_items = construct_dyn_items(&item_trait, &config);
+
+    let tokens = quote! {
+        #item_trait
+
+        #dyn_items
+    };
+
+    tokens.into()
+}
+
+fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
+    assert!(
+        item_trait.generics.params.is_empty(),
+        "trait generics are not supported by dyn_trait"
+    );
+    assert!(
+        item_trait.generics.where_clause.is_none(),
+        "traits with where clauses are not supported by dyn_trait"
+    );
+
+    // Implement known trait functions.
+    let clone_fn: (TypeBareFn, ItemFn) = (
+        parse_quote! { unsafe fn (&[u8]) -> Box<[u8]> },
+        parse_quote! {
+            unsafe fn clone_fn<S: Clone + 'static>(src: &[u8]) -> Box<[u8]> {
+                let typed_src: &S = Bytes::from_bytes(src);
+                Bytes::box_into_box_bytes(Box::new(typed_src.clone()))
+            }
+        }
+    );
+    let clone_from_fn: (TypeBareFn, ItemFn) = (
+        parse_quote! { unsafe fn (&mut [u8], &[u8]) },
+        parse_quote! {
+            unsafe fn clone_from_fn<S: Clone + 'static>(dst: &mut [u8], src: &[u8]) {
+                let typed_src: &S = Bytes::from_bytes(src);
+                let typed_dst: &mut S = Bytes::from_bytes_mut(dst);
+                typed_dst.clone_from(typed_src);
+            }
+        }
+    );
+    let eq_fn: (TypeBareFn, ItemFn) = (
+        parse_quote! { unsafe fn (&[u8], &[u8]) -> bool },
+        parse_quote! {
+            unsafe fn eq_fn<S: PartialEq + 'static>(a: &[u8], b: &[u8]) -> bool {
+                let (a, b): (&S, &S) = (Bytes::from_bytes(a), Bytes::from_bytes(b));
+                a.eq(b)
+            }
+        }
+    );
+    let hash_fn: (TypeBareFn, ItemFn) = (
+        parse_quote! { unsafe fn (&[u8], &mut dyn std::hash::Hasher) },
+        parse_quote! {
+            unsafe fn hash_fn<S: std::hash::Hash + 'static>(bytes: &[u8], mut state: &mut dyn std::hash::Hasher) {
+                let typed_data: &S = Bytes::from_bytes(bytes);
+                typed_data.hash(&mut state)
+            }
+        }
+    );
+    let fmt_fn: (TypeBareFn, ItemFn) = (
+        parse_quote! { unsafe fn (&[u8], &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> },
+        parse_quote! {
+            unsafe fn fmt_fn<S: std::fmt::Debug + 'static>(bytes: &[u8], f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+                let typed_data: &S = Bytes::from_bytes(bytes);
+                typed_data.fmt(f)
+            }
+        }
+    );
+
+    let mut known_traits: HashMap<Path, Vec<(TypeBareFn, ItemFn)>> = HashMap::new();
+    known_traits.insert(parse_quote! { Clone }, vec![clone_fn, clone_from_fn]);
+    known_traits.insert(parse_quote! { PartialEq }, vec![eq_fn]);
+    known_traits.insert(parse_quote! { std::hash::Hash }, vec![hash_fn]);
+    known_traits.insert(parse_quote! { std::fmt::Debug }, vec![fmt_fn]);
+
+    let trait_name = item_trait.ident.clone();
+    let vtable_name = Ident::new(&format!("{}{}", &trait_name, config.suffix), Span::call_site());
+
+    let vis = item_trait.vis.clone();
+
+    let vtable: Vec<_> = item_trait.supertraits.iter().filter_map(|bound| {
+        match bound {
+            TypeParamBound::Trait(bound) => {
+                if bound.lifetimes.is_some()
+                    || bound.modifier != TraitBoundModifier::None
+                {
+                    // We are looking for recognizable traits only
+                    None
+                } else {
+                    let seg = bound.path.segments.first().unwrap();
+                    if !seg.arguments.is_empty() {
+                        None
+                    } else {
+                        known_traits.get_key_value(&bound.path).map(|(path, table)| 
+                            (path.clone(), table.clone())
+                        )
+                    }
+                }
+            }
+            _ => None,
+        }
+    }).collect();
+
+    let vtable_fields: Punctuated<Field, Token![,]> = vtable.iter().map(|(_, table)| {
+        let fns: Punctuated<Type, Token![,]> = table.iter().map(|(ty, _)| Type::BareFn(ty.clone())).collect();
+        Field {
+            attrs: Vec::new(),
+            vis: Visibility::Inherited,
+            ident: None,
+            colon_token: None,
+            ty: parse_quote! { (#fns) },
+        }
+    }).collect();
+
+    let mut has_impls = TokenStream::new();
+    for (table_idx_usize, (path, table)) in vtable.iter().enumerate() {
+        let table_idx = syn::Index::from(table_idx_usize);
+        let mut methods = TokenStream::new();
+        if table.len() == 1 {
+            let (fn_type, fn_def) = table.first().unwrap();
+            let fn_name = &fn_def.sig.ident;
+            methods.append_all(quote!{
+                #[inline]
+                fn #fn_name ( &self ) -> &#fn_type { &self.#table_idx }
+            });
+        } else {
+            for (fn_idx_usize, (fn_type, fn_def)) in table.iter().enumerate() {
+                let fn_idx = syn::Index::from(fn_idx_usize);
+                let fn_name = &fn_def.sig.ident;
+                methods.append_all(quote!{
+                    #[inline]
+                    fn #fn_name ( &self ) -> &#fn_type { &(self.#table_idx).#fn_idx }
+                });
+            }
+        }
+
+        let supertrait_name = path.segments.last().unwrap().ident.clone();
+        let has_trait = Ident::new(&format!("Has{}", supertrait_name), Span::call_site());
+
+        has_impls.append_all(quote! {
+            impl #has_trait for #vtable_name {
+                #methods
+            }
+        })
+    }
+
+    let vtable_constructor = vtable.iter().map(|(_, fntable)| {
+        let fields = fntable.iter().map(|(_, fn_def)| {
+            let fn_name = fn_def.sig.ident.clone();
+            let expr: Expr = parse_quote! { #fn_name::<T> };
+            expr
+        }).collect::<Punctuated<Expr, Token![,]>>();
+        let tuple: Expr = if fields.len() > 1 {
+            parse_quote! { (#fields) }
+        } else {
+            parse_quote! { #fields }
+        };
+        tuple
+    }).collect::<Punctuated<Expr, Token![,]>>();
+
+    let crate_name = Ident::new(&config.dyn_crate_name, Span::call_site());
+
+    let fns_defs = vtable.iter().flat_map(|(_, fntable)| {
+        fntable.iter().map(|(_, fn_def)| {
+            parse_quote! { #fn_def }
+        })
+    }).collect::<Vec<Stmt>>();
+
+    let mut build_vtable_block = TokenStream::new();
+    for fn_def in fns_defs.iter() {
+        build_vtable_block.append_all(quote! { #fn_def });
+    }
+
+    build_vtable_block.append_all(quote! { #vtable_name(#vtable_constructor) });
+
+    quote! {
+        #vis struct #vtable_name (#vtable_fields);
+        
+        #has_impls
+
+        impl<T: #trait_name + 'static> #crate_name::Dyn for T {
+            type VTable = #vtable_name;
+            #[inline]
+            fn build_vtable() -> Self::VTable {
+                #build_vtable_block
+            }
+        }
+    }
+}
 
 #[proc_macro_attribute]
 pub fn dyn_trait_method(
@@ -30,8 +268,6 @@ pub fn dyn_trait_method(
     trait_method.sig = dyn_fn_sig(trait_method.sig);
 
     let tokens = quote! { #trait_method };
-
-    eprintln!("{}", &tokens);
 
     tokens.into()
 }
@@ -302,8 +538,9 @@ fn type_to_bytes(ty: Type) -> Type {
             elem: Box::new(type_to_bytes(*paren.elem)),
             ..paren
         }),
-        Type::Path(path) => 
-            self_type_path_into(path, syn::parse(quote! { Box<[u8]> }.into()).unwrap()),
+        Type::Path(path) => {
+            self_type_path_into(path, syn::parse(quote! { Box<[u8]> }.into()).unwrap())
+        }
         Type::Ptr(ptr) => Type::Ptr(TypePtr {
             elem: Box::new(self_to_byte_slice(*ptr.elem)),
             ..ptr
@@ -350,10 +587,7 @@ fn self_type_path_into(path: TypePath, into_ty: Type) -> Type {
 // Convert reference or pointer to self into a reference to bytes or pass through
 fn self_to_byte_slice(ty: Type) -> Type {
     let res = match ty {
-        Type::Path(path) => self_type_path_into(
-            path,
-            syn::parse(quote! { [u8] }.into()).unwrap(),
-        ),
+        Type::Path(path) => self_type_path_into(path, syn::parse(quote! { [u8] }.into()).unwrap()),
         other => other,
     };
     res
@@ -397,4 +631,3 @@ fn check_for_unsupported_self(ty: &Type) {
         _ => {}
     }
 }
-

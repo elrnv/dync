@@ -12,6 +12,7 @@ use crate::traits::*;
 pub trait Elem: Any + Bytes + CloneBytes + DropBytes {}
 impl<T> Elem for T where T: Any + Bytes + CloneBytes + DropBytes {}
 
+/// This container is a WIP, not to be used in production.
 #[derive(Debug, PartialEq, Hash)]
 pub struct VecClone {
     data: ManuallyDrop<VecCopy>,
@@ -57,9 +58,9 @@ impl VecClone {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::with_type_non_copy::<T>() }),
-            clone_fn: CloneFn::new(T::clone_bytes),
-            clone_from_fn: CloneFromFn::new(T::clone_from_bytes),
-            drop_fn: DropFn::new(T::drop_bytes),
+            clone_fn: CloneFn(T::clone_bytes),
+            clone_from_fn: CloneFromFn(T::clone_from_bytes),
+            drop_fn: DropFn(T::drop_bytes),
         }
     }
 
@@ -81,9 +82,9 @@ impl VecClone {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new( unsafe { VecCopy::with_capacity_non_copy::<T>(n) }),
-            clone_fn: CloneFn::new(T::clone_bytes),
-            clone_from_fn: CloneFromFn::new(T::clone_from_bytes),
-            drop_fn: DropFn::new(T::drop_bytes),
+            clone_fn: CloneFn(T::clone_bytes),
+            clone_from_fn: CloneFromFn(T::clone_from_bytes),
+            drop_fn: DropFn(T::drop_bytes),
         }
     }
 
@@ -95,9 +96,9 @@ impl VecClone {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_vec_non_copy(vec![def; n]) }),
-            clone_fn: CloneFn::new(T::clone_bytes),
-            clone_from_fn: CloneFromFn::new(T::clone_from_bytes),
-            drop_fn: DropFn::new(T::drop_bytes),
+            clone_fn: CloneFn(T::clone_bytes),
+            clone_from_fn: CloneFromFn(T::clone_from_bytes),
+            drop_fn: DropFn(T::drop_bytes),
         }
     }
 
@@ -108,9 +109,9 @@ impl VecClone {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_vec_non_copy(vec) }),
-            clone_fn: CloneFn::new(T::clone_bytes),
-            clone_from_fn: CloneFromFn::new(T::clone_from_bytes),
-            drop_fn: DropFn::new(T::drop_bytes),
+            clone_fn: CloneFn(T::clone_bytes),
+            clone_from_fn: CloneFromFn(T::clone_from_bytes),
+            drop_fn: DropFn(T::drop_bytes),
         }
     }
 
@@ -121,9 +122,9 @@ impl VecClone {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_slice_non_copy::<T>(slice) }),
-            clone_fn: CloneFn::new(T::clone_bytes),
-            clone_from_fn: CloneFromFn::new(T::clone_from_bytes),
-            drop_fn: DropFn::new(T::drop_bytes),
+            clone_fn: CloneFn(T::clone_bytes),
+            clone_from_fn: CloneFromFn(T::clone_from_bytes),
+            drop_fn: DropFn(T::drop_bytes),
         }
     }
 
@@ -398,7 +399,7 @@ impl VecClone {
         } = self;
         let type_id = data.element_type_id();
         // Safety is guaranteed here by the value API.
-        unsafe { ValueMut::from_raw_parts(data.get_bytes_mut(i), type_id, *clone_from_fn) }
+        unsafe { ValueMut::from_raw_parts(data.get_bytes_mut(i), type_id, clone_from_fn.0) }
     }
 
     /// Return an iterator over untyped value references stored in this buffer.
@@ -471,7 +472,7 @@ impl VecClone {
         } = &mut **data;
         data.chunks_exact_mut(*element_size)
             .map(move |bytes| unsafe {
-                ValueMut::from_raw_parts(bytes, *element_type_id, clone_from_fn)
+                ValueMut::from_raw_parts(bytes, *element_type_id, clone_from_fn.0)
             })
     }
 }
@@ -506,9 +507,9 @@ impl From<VecCopy> for VecClone {
         // default empty implementations for clone and drop.
         VecClone {
             data: ManuallyDrop::new(data),
-            clone_fn: CloneFn::new(|v: &[u8]| { v.to_vec().into_boxed_slice() }),
-            clone_from_fn: CloneFromFn::new(|_,_| {}),
-            drop_fn: DropFn::new(|_| {}),
+            clone_fn: CloneFn(|v: &[u8]| { v.to_vec().into_boxed_slice() }),
+            clone_from_fn: CloneFromFn(|_,_| {}),
+            drop_fn: DropFn(|_| {}),
         }
     }
 }
