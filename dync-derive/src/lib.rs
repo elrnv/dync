@@ -9,7 +9,7 @@ type GenericsMap = HashMap<Ident, Punctuated<TypeParamBound, Token![+]>>;
 
 #[derive(Debug)]
 struct Config {
-    dyn_crate_name: String,
+    dync_crate_name: String,
     suffix: String,
     build_vtable_only: bool,
 }
@@ -17,7 +17,7 @@ struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            dyn_crate_name: String::from("dyn"),
+            dync_crate_name: String::from("dync"),
             suffix: String::from("VTable"),
             build_vtable_only: false,
         }
@@ -44,13 +44,13 @@ impl Parse for Config {
     fn parse(input: ParseStream) -> Result<Self> {
         let mut config = Config::default();
         let attribs: Punctuated<DynAttrib, Token![,]> =
-            Punctuated::parse_separated_nonempty(input)?;
+            Punctuated::parse_terminated(input)?;
         for attrib in attribs.iter() {
             let name = attrib.ident.to_string();
             match (name.as_str(), &attrib.value) {
                 ("build_vtable_only", None) => config.build_vtable_only = true,
-                ("dyn_crate_name", Some(Lit::Str(ref lit))) => {
-                    config.dyn_crate_name = lit.value().clone()
+                ("dync_crate_name", Some(Lit::Str(ref lit))) => {
+                    config.dync_crate_name = lit.value().clone()
                 }
                 ("suffix", Some(Lit::Str(ref lit))) => config.suffix = lit.value().clone(),
                 _ => {}
@@ -61,34 +61,34 @@ impl Parse for Config {
 }
 
 #[proc_macro_attribute]
-pub fn dyn_trait(
+pub fn dync_trait(
     attr: proc_macro::TokenStream,
     item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
     let config: Config = syn::parse(attr).expect("Failed to parse attributes");
 
     let item_trait: ItemTrait =
-        syn::parse(item).expect("the dyn_trait attribute applies only to trait definitions");
+        syn::parse(item).expect("the dync_trait attribute applies only to trait definitions");
 
-    let dyn_items = construct_dyn_items(&item_trait, &config);
+    let dync_items = construct_dync_items(&item_trait, &config);
 
     let tokens = quote! {
         #item_trait
 
-        #dyn_items
+        #dync_items
     };
 
     tokens.into()
 }
 
-fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
+fn construct_dync_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
     assert!(
         item_trait.generics.params.is_empty(),
-        "trait generics are not supported by dyn_trait"
+        "trait generics are not supported by dync_trait"
     );
     assert!(
         item_trait.generics.where_clause.is_none(),
-        "traits with where clauses are not supported by dyn_trait"
+        "traits with where clauses are not supported by dync_trait"
     );
 
     // Byte Helpers
@@ -242,7 +242,7 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
         }
     }).collect();
 
-    let crate_name = Ident::new(&config.dyn_crate_name, Span::call_site());
+    let crate_name = Ident::new(&config.dync_crate_name, Span::call_site());
 
     let mut has_impls = TokenStream::new();
     for (table_idx_usize, (path, table)) in vtable.iter().enumerate() {
@@ -323,14 +323,14 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn dyn_trait_method(
+pub fn dync_trait_method(
     _attr: proc_macro::TokenStream,
     item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
     let mut trait_method: TraitItemMethod = syn::parse(item)
-        .expect("the dyn_trait_function attribute applies only to trait function definitions only");
+        .expect("the dync_trait_function attribute applies only to trait function definitions only");
 
-    trait_method.sig = dyn_fn_sig(trait_method.sig);
+    trait_method.sig = dync_fn_sig(trait_method.sig);
 
     let tokens = quote! { #trait_method };
 
@@ -338,26 +338,26 @@ pub fn dyn_trait_method(
 }
 
 /// Convert a function signature by replacing self types with bytes.
-fn dyn_fn_sig(sig: Signature) -> Signature {
+fn dync_fn_sig(sig: Signature) -> Signature {
     assert!(
         sig.constness.is_none(),
-        "const functions not supported by dyn_trait"
+        "const functions not supported by dync_trait"
     );
     assert!(
         sig.asyncness.is_none(),
-        "async functions not supported by dyn_trait"
+        "async functions not supported by dync_trait"
     );
     assert!(
         sig.abi.is_none(),
-        "extern functions not supported by dyn_trait"
+        "extern functions not supported by dync_trait"
     );
     assert!(
         sig.variadic.is_none(),
-        "variadic functions not supported by dyn_trait"
+        "variadic functions not supported by dync_trait"
     );
 
-    let dyn_name = format!("{}_bytes", sig.ident);
-    let dyn_ident = Ident::new(&dyn_name, sig.ident.span().clone());
+    let dync_name = format!("{}_bytes", sig.ident);
+    let dync_ident = Ident::new(&dync_name, sig.ident.span().clone());
 
     let mut generics = GenericsMap::new();
 
@@ -367,23 +367,23 @@ fn dyn_fn_sig(sig: Signature) -> Signature {
             GenericParam::Type(ty) => {
                 assert!(
                     ty.attrs.is_empty(),
-                    "type parameter attributes are not supported by dyn_trait"
+                    "type parameter attributes are not supported by dync_trait"
                 );
                 assert!(
                     ty.colon_token.is_some(),
-                    "unbound type parameters are not supported by dyn_trait"
+                    "unbound type parameters are not supported by dync_trait"
                 );
                 assert!(
                     ty.eq_token.is_none() && ty.default.is_none(),
-                    "default type parameters are not supported by dyn_trait"
+                    "default type parameters are not supported by dync_trait"
                 );
                 generics.insert(ty.ident.clone(), ty.bounds.clone());
             }
             GenericParam::Lifetime(_) => {
-                panic!("lifetime parameters in trait functions are not supported by dyn_trait");
+                panic!("lifetime parameters in trait functions are not supported by dync_trait");
             }
             GenericParam::Const(_) => {
-                panic!("const parameters in trait functions are not supported by dyn_trait");
+                panic!("const parameters in trait functions are not supported by dync_trait");
             }
         }
     }
@@ -393,31 +393,31 @@ fn dyn_fn_sig(sig: Signature) -> Signature {
                 WherePredicate::Type(ty) => {
                     assert!(
                         ty.lifetimes.is_none(),
-                        "lifetimes in for bindings are not supported by dyn_trait"
+                        "lifetimes in for bindings are not supported by dync_trait"
                     );
                     if let Type::Path(ty_path) = ty.bounded_ty.clone() {
                         assert!(
                             ty_path.qself.is_none(),
-                            "complex trait bounds are not supported by dyn_trait"
+                            "complex trait bounds are not supported by dync_trait"
                         );
                         assert!(
                             ty_path.path.leading_colon.is_none(),
-                            "complex trait bounds are not supported by dyn_trait"
+                            "complex trait bounds are not supported by dync_trait"
                         );
                         assert!(
                             ty_path.path.segments.len() != 1,
-                            "complex trait bounds are not supported by dyn_trait"
+                            "complex trait bounds are not supported by dync_trait"
                         );
                         let seg = ty_path.path.segments.first().unwrap();
                         assert!(
                             !seg.arguments.is_empty(),
-                            "complex trait bounds are not supported by dyn_trait"
+                            "complex trait bounds are not supported by dync_trait"
                         );
                         generics.insert(seg.ident.clone(), ty.bounds.clone());
                     }
                 }
                 WherePredicate::Lifetime(_) => {
-                    panic!("lifetime parameters in trait functions are not supported by dyn_trait");
+                    panic!("lifetime parameters in trait functions are not supported by dync_trait");
                 }
                 _ => {}
             }
@@ -425,7 +425,7 @@ fn dyn_fn_sig(sig: Signature) -> Signature {
     }
 
     // Convert inputs.
-    let dyn_inputs: Punctuated<FnArg, Token![,]> = sig
+    let dync_inputs: Punctuated<FnArg, Token![,]> = sig
         .inputs
         .iter()
         .map(|fn_arg| {
@@ -460,22 +460,22 @@ fn dyn_fn_sig(sig: Signature) -> Signature {
         .collect();
 
     // Convert return type.
-    let dyn_output: Type = match sig.output {
+    let dync_output: Type = match sig.output {
         ReturnType::Type(_, ty) => type_to_bytes(process_generics(*ty, &generics)),
         ReturnType::Default => syn::parse(quote! { () }.into()).unwrap(),
     };
 
     Signature {
         unsafety: Some(Token![unsafe](Span::call_site())),
-        ident: dyn_ident,
+        ident: dync_ident,
         generics: Generics {
             lt_token: None,
             params: Punctuated::new(),
             gt_token: None,
             where_clause: None,
         },
-        inputs: dyn_inputs,
-        output: ReturnType::Type(Token![->](Span::call_site()), Box::new(dyn_output)),
+        inputs: dync_inputs,
+        output: ReturnType::Type(Token![->](Span::call_site()), Box::new(dync_output)),
         ..sig
     }
 }
@@ -552,13 +552,13 @@ fn check_for_unsupported_generics(ty: &Type, generics: &GenericsMap) {
         Type::Path(path) => {
             assert!(
                 path.qself.is_none(),
-                "qualified paths not supported by dyn_trait"
+                "qualified paths not supported by dync_trait"
             );
             if path.path.leading_colon.is_none() && path.path.segments.len() == 1 {
                 let seg = path.path.segments.first().unwrap();
                 assert!(
                     seg.arguments.is_empty() && "Self".to_string() == seg.ident.to_string(),
-                    "using Self in this context is not supported by dyn_trait"
+                    "using Self in this context is not supported by dync_trait"
                 );
             }
         }
@@ -633,7 +633,7 @@ fn type_to_bytes(ty: Type) -> Type {
 fn self_type_path_into(path: TypePath, into_ty: Type) -> Type {
     assert!(
         path.qself.is_none(),
-        "qualified paths not supported by dyn_trait"
+        "qualified paths not supported by dync_trait"
     );
     if path.path.leading_colon.is_none() && path.path.segments.len() == 1 {
         let seg = path.path.segments.first().unwrap();
@@ -675,13 +675,13 @@ fn check_for_unsupported_self(ty: &Type) {
         Type::Path(path) => {
             assert!(
                 path.qself.is_none(),
-                "qualified paths not supported by dyn_trait"
+                "qualified paths not supported by dync_trait"
             );
             if path.path.leading_colon.is_none() && path.path.segments.len() == 1 {
                 let seg = path.path.segments.first().unwrap();
                 assert!(
                     seg.arguments.is_empty() && "Self".to_string() == seg.ident.to_string(),
-                    "using Self in this context is not supported by dyn_trait"
+                    "using Self in this context is not supported by dync_trait"
                 );
             }
         }

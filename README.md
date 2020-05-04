@@ -1,10 +1,10 @@
-# data-buffer
+# `dync`
 
-A simple low-level data buffer type useful for IO and in homogeneous collections
+An efficient alternative to `dyn Trait` for containerized types
 
-[![On crates.io](https://img.shields.io/crates/v/data_buffer.svg)](https://crates.io/crates/data_buffer)
-[![On docs.rs](https://docs.rs/data-buffer/badge.svg)](https://docs.rs/data-buffer/)
-[![Build status](https://travis-ci.org/elrnv/buffer.svg?branch=master)](https://travis-ci.org/elrnv/buffer)
+[![On crates.io](https://img.shields.io/crates/v/dync.svg)](https://crates.io/crates/dync)
+[![On docs.rs](https://docs.rs/dync/badge.svg)](https://docs.rs/dync/)
+[![Build status](https://travis-ci.org/elrnv/dync.svg?branch=master)](https://travis-ci.org/elrnv/dync)
 
 # License
 

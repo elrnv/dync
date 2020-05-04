@@ -1,10 +1,10 @@
 [package]
-name = "dyn-derive"
+name = "dync-derive"
 version = "0.1.0"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
-description = "Derive macros for dynamic trait objects"
+description = "Derive macros for creating `dync` traits"
 
 homepage = "https://github.com/elrnv/buffer"
 repository = "https://github.com/elrnv/buffer"

@@ -159,7 +159,7 @@ impl VecCopy {
     ///
     /// #  Examples
     /// ```
-    /// use data_buffer::VecCopy;
+    /// use dync::VecCopy;
     /// let buf = VecCopy::with_size(8, 42usize); // Create buffer
     /// let buf_vec: Vec<usize> = buf.into_vec().unwrap(); // Convert into `Vec`
     /// assert_eq!(buf_vec, vec![42usize; 8]);
@@ -174,7 +174,7 @@ impl VecCopy {
     ///
     /// #  Examples
     /// ```
-    /// use data_buffer::VecCopy;
+    /// use dync::VecCopy;
     /// let vec = vec![1u8, 3, 4, 1, 2];
     /// let buf = VecCopy::from_vec(vec.clone()); // Convert into buffer
     /// let nu_vec: Vec<u8> = buf.into_vec().unwrap(); // Convert back into `Vec`
@@ -276,7 +276,7 @@ impl VecCopy {
     ///
     /// #  Examples
     /// ```
-    /// use data_buffer::VecCopy;
+    /// use dync::VecCopy;
     /// let vec = vec![1u8, 3, 4, 1, 2];
     /// let mut buf = VecCopy::from_vec(vec.clone()); // Convert into buffer
     /// buf.fill(0u8);
@@ -377,7 +377,7 @@ impl VecCopy {
     ///
     /// # Examples
     /// ```
-    /// use data_buffer::VecCopy;
+    /// use dync::VecCopy;
     /// let vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
     /// let buf = VecCopy::from(vec.clone()); // Convert into buffer
     /// for (i, &val) in buf.iter::<f32>().unwrap().enumerate() {
@@ -486,7 +486,7 @@ impl VecCopy {
     /// # Example
     ///
     /// ```
-    /// use data_buffer::*;
+    /// use dync::*;
     /// let mut buf = VecCopy::from_vec(vec![1u32,2,3,4,5]);
     /// buf.rotate_left(3);
     /// assert_eq!(buf.as_slice::<u32>().unwrap(), &[4,5,1,2,3]);
@@ -503,7 +503,7 @@ impl VecCopy {
     /// # Example
     ///
     /// ```
-    /// use data_buffer::*;
+    /// use dync::*;
     /// let mut buf = VecCopy::from_vec(vec![1u32,2,3,4,5]);
     /// buf.rotate_right(3);
     /// assert_eq!(buf.as_slice::<u32>().unwrap(), &[3,4,5,1,2]);
@@ -543,7 +543,7 @@ impl VecCopy {
     ///
     /// # Examples
     /// ```
-    /// use data_buffer::VecCopy;
+    /// use dync::VecCopy;
     /// let vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
     /// let buf = VecCopy::from(vec.clone()); // Convert into buffer
     /// for (i, val) in buf.iter_value_ref().enumerate() {
@@ -565,7 +565,7 @@ impl VecCopy {
     ///
     /// # Examples
     /// ```
-    /// use data_buffer::*;
+    /// use dync::*;
     /// let vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
     /// let mut buf = VecCopy::from(vec.clone()); // Convert into buffer
     /// for (i, val) in buf.iter_value_mut().enumerate() {

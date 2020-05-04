@@ -5,7 +5,7 @@
 //! The remaining traits improve compatibility with the rest of the standard library.
 
 use crate::bytes::*;
-use dyn_derive::dyn_trait_method;
+use dync_derive::dync_trait_method;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::mem::ManuallyDrop;
@@ -15,10 +15,10 @@ pub trait DropBytes {
 }
 
 pub trait CloneBytes: Clone {
-    #[dyn_trait_method]
+    #[dync_trait_method]
     fn clone(&self) -> Self;
     //unsafe fn clone_bytes(src: &[u8]) -> Box<[u8]>;
-    #[dyn_trait_method]
+    #[dync_trait_method]
     fn clone_from(&mut self, src: &Self);
     //unsafe fn clone_from_bytes(dst: &mut [u8], src: &[u8]);
 
@@ -27,7 +27,7 @@ pub trait CloneBytes: Clone {
 }
 
 pub trait PartialEqBytes: PartialEq {
-    #[dyn_trait_method]
+    #[dync_trait_method]
     fn eq(&self, other: &Self) -> bool;
     //unsafe fn eq_bytes(a: &[u8], b: &[u8]) -> bool;
 }
@@ -35,13 +35,13 @@ pub trait PartialEqBytes: PartialEq {
 pub trait EqBytes: PartialEqBytes + Eq {}
 
 pub trait HashBytes: Hash {
-    #[dyn_trait_method]
+    #[dync_trait_method]
     fn hash<H: Hasher>(&self, state: &mut H);
     //unsafe fn hash_bytes(bytes: &[u8], state: &mut dyn Hasher);
 }
 
 pub trait DebugBytes: fmt::Debug {
-    #[dyn_trait_method]
+    #[dync_trait_method]
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error>;
     //unsafe fn fmt_bytes(bytes: &[u8], f: &mut fmt::Formatter) -> Result<(), fmt::Error>;
 }

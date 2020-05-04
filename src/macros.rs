@@ -7,10 +7,10 @@
 /// macro to call `$fn` with type parameter `u8` like `$fn::<u8>(buffer)`.
 /// # Examples
 /// ```rust
-/// # #[macro_use] extern crate data_buffer as buf;
+/// # #[macro_use] extern crate dync;
 /// # use std::fmt;
 /// # use std::any::Any;
-/// # use buf::VecCopy;
+/// # use dync::VecCopy;
 /// // Implement pretty printing of a `VecCopy` derivative for numeric buffers.
 /// struct MyBuffer(VecCopy);
 /// impl fmt::Display for MyBuffer {

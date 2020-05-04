@@ -412,7 +412,7 @@ impl VecClone {
     /// # Examples
     ///
     /// ```
-    /// use data_buffer::vec_clone::*;
+    /// use dync::vec_clone::*;
     /// use std::rc::Rc;
     /// let vec: Vec<_> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43].into_iter().map(Rc::new).collect();
     /// let mut buf = VecClone::from(vec); // Convert into VecCLone
@@ -444,8 +444,8 @@ impl VecClone {
     ///
     /// # Examples
     /// ```
-    /// use data_buffer::clone_value::*;
-    /// use data_buffer::vec_clone::*;
+    /// use dync::clone_value::*;
+    /// use dync::vec_clone::*;
     /// use std::rc::Rc;
     /// let vec: Vec<_> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43].into_iter().map(Rc::new).collect();
     /// let mut buf = VecClone::from(vec.clone()); // Convert into buffer

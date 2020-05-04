@@ -542,12 +542,12 @@ impl<T: Elem, V: VTable<T>> Into<Option<Vec<T>>> for VecDyn<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dyn_derive::dyn_trait;
+    use dync_derive::dync_trait;
     use rand::prelude::*;
     use std::mem::size_of;
     use std::rc::Rc;
 
-    #[dyn_trait(suffix = "VTable", dyn_crate_name = "crate")]
+    #[dync_trait(suffix = "VTable", dync_crate_name = "crate")]
     pub trait AllTrait: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug {}
     impl<T> AllTrait for T where T: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug {}
 

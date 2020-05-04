@@ -6,8 +6,8 @@
 //! over time, which makes it cheaper to pull the result from a table of previously computed
 //! values.
 
-use data_buffer::{BoxValue, Value, VecDyn};
-use dyn_derive::dyn_trait;
+use dync::{BoxValue, Value, VecDyn};
+use dync_derive::dync_trait;
 use std::collections::HashMap;
 use std::time::Instant;
 use std::rc::Rc;
@@ -19,7 +19,7 @@ use rand::distributions::Alphanumeric;
 // This is quite tricky to do with trait objects. For instance, see the following post for how to
 // make a trait object work with the Eq trait (which is required for HashMap values):
 // https://stackoverflow.com/questions/25339603/how-to-test-for-equality-between-trait-objects
-#[dyn_trait(dyn_crate_name = "data_buffer")]
+#[dync_trait]
 trait HTValue: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug {}
 impl<T> HTValue for T where T: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug {}
 
