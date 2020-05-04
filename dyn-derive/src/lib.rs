@@ -18,7 +18,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             dyn_crate_name: String::from("dyn"),
-            suffix: String::from("Bytes"),
+            suffix: String::from("VTable"),
             build_vtable_only: false,
         }
     }
@@ -108,6 +108,15 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
         }
     };
 
+    let as_bytes_fn: ItemFn = parse_quote! {
+        #[inline]
+        unsafe fn as_bytes<S: 'static>(s: &S) -> &[u8] {
+            // This is safe since any memory can be represented by bytes and we are looking at
+            // sized types only.
+            unsafe { std::slice::from_raw_parts(s as *const S as *const u8, std::mem::size_of::<S>()) }
+        }
+    };
+
     let box_into_box_bytes_fn: ItemFn = parse_quote! {
         #[inline]
         fn box_into_box_bytes<S: 'static>(b: Box<S>) -> Box<[u8]> {
@@ -140,6 +149,21 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
             }
         }
     );
+
+    let clone_into_raw_fn: (TypeBareFn, ItemFn) = (
+        parse_quote! { unsafe fn (&[u8], &mut [u8]) },
+        parse_quote! {
+            #[inline]
+            unsafe fn clone_into_raw_fn<S: Clone + 'static>(src: &[u8], dst: &mut [u8]) {
+                let typed_src: &S = from_bytes(src);
+                let cloned = S::clone(typed_src);
+                let cloned_bytes = as_bytes(&cloned);
+                dst.copy_from_slice(cloned_bytes);
+                let _ = std::mem::ManuallyDrop::new(cloned);
+            }
+        }
+    );
+
     let eq_fn: (TypeBareFn, ItemFn) = (
         parse_quote! { unsafe fn (&[u8], &[u8]) -> bool },
         parse_quote! {
@@ -172,7 +196,7 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
     );
 
     let mut known_traits: HashMap<Path, Vec<(TypeBareFn, ItemFn)>> = HashMap::new();
-    known_traits.insert(parse_quote! { Clone }, vec![clone_fn, clone_from_fn]);
+    known_traits.insert(parse_quote! { Clone }, vec![clone_fn, clone_from_fn, clone_into_raw_fn]);
     known_traits.insert(parse_quote! { PartialEq }, vec![eq_fn]);
     known_traits.insert(parse_quote! { Eq }, vec![]);
     known_traits.insert(parse_quote! { std::hash::Hash }, vec![hash_fn]);
@@ -218,6 +242,8 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
         }
     }).collect();
 
+    let crate_name = Ident::new(&config.dyn_crate_name, Span::call_site());
+
     let mut has_impls = TokenStream::new();
     for (table_idx_usize, (path, table)) in vtable.iter().enumerate() {
         let table_idx = syn::Index::from(table_idx_usize);
@@ -243,8 +269,10 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
         let supertrait_name = path.segments.last().unwrap().ident.clone();
         let has_trait = Ident::new(&format!("Has{}", supertrait_name), Span::call_site());
 
+        //eprintln!("{}", &methods);
+
         has_impls.append_all(quote! {
-            impl #has_trait for #vtable_name {
+            impl #crate_name :: #has_trait for #vtable_name {
                 #methods
             }
         })
@@ -260,8 +288,6 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
         tuple
     }).collect::<Punctuated<Expr, Token![,]>>();
 
-
-    let crate_name = Ident::new(&config.dyn_crate_name, Span::call_site());
 
     let fns_defs = vtable.iter().flat_map(|(_, fntable)| {
         fntable.iter().map(|(_, fn_def)| {
@@ -285,6 +311,7 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
             fn build_vtable() -> #vtable_name {
                 #from_bytes_fn
                 #from_bytes_mut_fn
+                #as_bytes_fn
                 #box_into_box_bytes_fn
                 #build_vtable_block
                 #vtable_name(#vtable_constructor)

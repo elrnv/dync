@@ -76,6 +76,7 @@ pub(crate) trait HasDrop {
 pub trait HasClone {
     fn clone_fn(&self) -> &CloneFnType;
     fn clone_from_fn(&self) -> &CloneFromFnType;
+    fn clone_into_raw_fn(&self) -> &CloneIntoRawFnType;
 }
 
 pub trait HasHash {
@@ -110,6 +111,10 @@ impl<V: HasClone> HasClone for (DropFn, V) {
     #[inline]
     fn clone_from_fn(&self) -> &CloneFromFnType {
         &self.1.clone_from_fn()
+    }
+    #[inline]
+    fn clone_into_raw_fn(&self) -> &CloneIntoRawFnType {
+        &self.1.clone_into_raw_fn()
     }
 }
 
@@ -274,6 +279,22 @@ impl<V> BoxValue<V> {
             bytes: ManuallyDrop::new(bytes),
             type_id,
             vtable,
+        }
+    }
+
+    pub fn as_ref(&self) -> ValueRef<V> {
+        ValueRef {
+            bytes: &self.bytes,
+            type_id: self.type_id,
+            vtable: VTableRef::Ref(&self.vtable),
+        }
+    }
+
+    pub fn as_mut(&mut self) -> ValueMut<V> {
+        ValueMut {
+            bytes: &mut self.bytes,
+            type_id: self.type_id,
+            vtable: VTableRef::Ref(&self.vtable),
         }
     }
 }
@@ -469,7 +490,7 @@ impl<'a, V> ValueRef<'a, V> {
     {
         Value {
             bytes: ManuallyDrop::new(unsafe {
-                self.vtable.as_ref().clone_fn()(self.bytes.get_bytes_ref())
+                self.vtable.as_ref().clone_fn()(&self.bytes)
             }),
             type_id: self.type_id,
             vtable: Arc::from(self.vtable.as_ref().clone()),

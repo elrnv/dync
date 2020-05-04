@@ -303,6 +303,49 @@ impl<V> VecDyn<V> {
      * Value API. This allows users to manipulate contained data without knowing the element type.
      */
 
+    /// Push a value onto this buffer.
+    ///
+    /// If the type of the given value coincides with the type stored by this buffer,
+    /// then the modified buffer is returned via a mutable reference.  Otherwise, `None` is
+    /// returned.
+    #[inline]
+    pub fn push_value(&mut self, value: BoxValue<V>) -> Option<&mut Self> {
+        if self.element_type_id() == value.value_type_id() {
+            // Prevent the value from being dropped at the end of this scope since it will be later
+            // dropped by this container.
+            let value = ManuallyDrop::new(value);
+            self.data.data.extend_from_slice(&value.bytes);
+            Some(self)
+        } else {
+            None
+        }
+    }
+
+    /// Push a clone of the referenced value to this buffer.
+    ///
+    /// If the type of the given value coincides with the type stored by this buffer,
+    /// then the modified buffer is returned via a mutable reference.  Otherwise, `None` is
+    /// returned.
+    ///
+    /// This is more efficient than `push_value` since it avoids an extra allocation, however it
+    /// requires the contained value to be `Clone`.
+    #[inline]
+    pub fn push_cloned(&mut self, value: ValueRef<V>) -> Option<&mut Self>
+        where V: HasClone 
+    {
+        if self.element_type_id() == value.value_type_id() {
+            let orig_len = self.data.data.len();
+            self.data.data.resize(orig_len + value.bytes.len(), 0u8);
+            // This does not leak because the copied bytes are guaranteed to be dropped.
+            unsafe {
+                self.vtable.1.clone_into_raw_fn()(value.bytes, &mut self.data.data[orig_len..]);
+            }
+            Some(self)
+        } else {
+            None
+        }
+    }
+
     /// Get a reference to a value stored in this container at index `i`.
     #[inline]
     pub fn get(&self, i: usize) -> ValueRef<V> {

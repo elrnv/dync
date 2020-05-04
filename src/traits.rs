@@ -21,6 +21,9 @@ pub trait CloneBytes: Clone {
     #[dyn_trait_method]
     fn clone_from(&mut self, src: &Self);
     //unsafe fn clone_from_bytes(dst: &mut [u8], src: &[u8]);
+
+    /// Clone without dropping the destination bytes.
+    unsafe fn clone_into_raw_bytes(src: &[u8], dst: &mut [u8]);
 }
 
 pub trait PartialEqBytes: PartialEq {
@@ -63,6 +66,14 @@ impl<T: Clone + 'static> CloneBytes for T {
         let typed_dst: &mut T = Bytes::from_bytes_mut(dst);
         typed_dst.clone_from(typed_src);
     }
+    #[inline]
+    unsafe fn clone_into_raw_bytes(src: &[u8], dst: &mut [u8]) {
+        let typed_src: &T = Bytes::from_bytes(src);
+        let cloned = T::clone(typed_src);
+        let cloned_bytes = Bytes::as_bytes(&cloned);
+        dst.copy_from_slice(cloned_bytes);
+        let _ = ManuallyDrop::new(cloned);
+    }
 }
 
 impl<T: PartialEq + 'static> PartialEqBytes for T {
@@ -93,6 +104,7 @@ impl<T: fmt::Debug + 'static> DebugBytes for T {
 
 pub(crate) type CloneFnType = unsafe fn(&[u8]) -> Box<[u8]>;
 pub(crate) type CloneFromFnType = unsafe fn(&mut [u8], &[u8]);
+pub(crate) type CloneIntoRawFnType = unsafe fn(&[u8], &mut [u8]);
 pub(crate) type EqFnType = unsafe fn(&[u8], &[u8]) -> bool;
 pub(crate) type HashFnType = unsafe fn(&[u8], &mut dyn Hasher);
 pub(crate) type FmtFnType = unsafe fn(&[u8], &mut fmt::Formatter) -> Result<(), fmt::Error>;
