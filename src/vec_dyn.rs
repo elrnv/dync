@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::{
     any::{Any, TypeId},
     mem::ManuallyDrop,
@@ -283,11 +284,11 @@ impl<V> VecDyn<V> {
 
     /// Get a reference to a value stored in this container at index `i`.
     #[inline]
-    pub fn value_ref(&self, i: usize) -> ValueRef {
+    pub fn value_ref(&self, i: usize) -> DynValueRef<V> {
         debug_assert!(i < self.len());
         // This call is safe since our buffer guarantees that the given bytes have the
         // corresponding TypeId.
-        unsafe { ValueRef::from_raw_parts(self.data.get_bytes(i), self.element_type_id()) }
+        unsafe { DynValueRef::from_raw_parts(self.data.get_bytes(i), self.element_type_id(), Arc::clone(&self.vtable)) }
     }
 
     /// Return an iterator over untyped value references stored in this buffer.
@@ -403,7 +404,7 @@ impl<V: HasClone> VecDyn<V> {
 
     /// Get a mutable reference to a value stored in this container at index `i`.
     #[inline]
-    pub fn value_mut(&mut self, i: usize) -> ValueMut {
+    pub fn value_mut(&mut self, i: usize) -> DynValueMut<'_, V> {
         debug_assert!(i < self.len());
         let Self {
             data,
@@ -412,7 +413,7 @@ impl<V: HasClone> VecDyn<V> {
         let type_id = data.element_type_id();
         // Safety is guaranteed here by the value API.
         unsafe {
-            ValueMut::from_raw_parts(data.get_bytes_mut(i), type_id, *vtable.1.clone_from_fn())
+            DynValueMut::from_raw_parts(data.get_bytes_mut(i), type_id, Arc::clone(vtable))
         }
     }
 
@@ -422,9 +423,7 @@ impl<V: HasClone> VecDyn<V> {
     /// result, this type of iteration is typically less efficient if a typed value is needed
     /// for each element.
     #[inline]
-    pub fn iter_value_mut<'a>(&'a mut self) -> impl Iterator<Item = ValueMut<'a>> + 'a
-        where V: HasClone
-    {
+    pub fn iter_value_mut<'a>(&'a mut self) -> impl Iterator<Item = DynValueMut<'a, V>> + 'a {
         let &mut Self {
             ref mut data,
             ref mut vtable,
@@ -436,7 +435,7 @@ impl<V: HasClone> VecDyn<V> {
         } = &mut **data;
         data.chunks_exact_mut(*element_size)
             .map(move |bytes| unsafe {
-                ValueMut::from_raw_parts(bytes, *element_type_id, *vtable.1.clone_from_fn())
+                DynValueMut::from_raw_parts(bytes, *element_type_id, Arc::clone(vtable))
             })
     }
 }
@@ -509,29 +508,29 @@ mod tests {
         //assert!(!hashset.contains(&Rc::new(42.0).into()));
     }
 
-    //#[test]
-    //fn iter_value_ref() {
-    //    use std::rc::Rc;
-    //    let vec: Vec<_> = vec![1, 23, 2, 42, 11]
-    //        .into_iter()
-    //        .map(Rc::new)
-    //        .collect();
-    //    {
-    //        let buf = VecDyn::from(vec.clone()); // Convert into buffer
-    //        let orig = Rc::new(100);
-    //        let mut rc = Rc::clone(&orig);
-    //        assert_eq!(Rc::strong_count(&rc), 2);
-    //        for val in buf.iter_value_ref() {
-    //            ValueMut::new(&mut rc).clone_from(val);
-    //        }
-    //        assert_eq!(Rc::strong_count(&orig), 1);
-    //        assert_eq!(Rc::strong_count(&rc), 3);
-    //        assert_eq!(Rc::strong_count(&vec[4]), 3);
-    //        assert!(vec.iter().take(4).all(|x| Rc::strong_count(x) == 2));
-    //        assert_eq!(rc, Rc::new(11));
-    //    }
-    //    assert!(vec.iter().all(|x| Rc::strong_count(x) == 1));
-    //}
+    #[test]
+    fn iter_value_ref() {
+        use std::rc::Rc;
+        let vec: Vec<_> = vec![1, 23, 2, 42, 11]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
+        {
+            let buf = VecDyn::from(vec.clone()); // Convert into buffer
+            let orig = Rc::new(100);
+            let mut rc = Rc::clone(&orig);
+            assert_eq!(Rc::strong_count(&rc), 2);
+            for val in buf.iter_value_ref() {
+                DynValueMut::new(&mut rc).clone_from(val);
+            }
+            assert_eq!(Rc::strong_count(&orig), 1);
+            assert_eq!(Rc::strong_count(&rc), 3);
+            assert_eq!(Rc::strong_count(&vec[4]), 3);
+            assert!(vec.iter().take(4).all(|x| Rc::strong_count(x) == 2));
+            assert_eq!(rc, Rc::new(11));
+        }
+        assert!(vec.iter().all(|x| Rc::strong_count(x) == 1));
+    }
 
     /// Test various ways to create a `VecDyn`.
     #[test]

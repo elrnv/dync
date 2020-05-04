@@ -26,9 +26,14 @@ use num_traits::{cast, NumCast, Zero};
 pub mod macros;
 mod bytes;
 mod traits;
+#[macro_use]
 mod value;
-mod vec_clone;
 mod vec_dyn;
+
+#[cfg(feature = "testing")]
+pub mod clone_value;
+#[cfg(feature = "testing")]
+pub mod vec_clone;
 
 #[cfg(feature = "serde")]
 pub(crate) mod serde_helpers {
@@ -51,16 +56,38 @@ pub(crate) mod serde_helpers {
     }
 }
 
+pub use value::{CopyValueRef, CopyValueMut};
 pub use bytes::*;
 pub use value::*;
-pub use vec_clone::*;
 pub use vec_dyn::*;
+
+pub trait Elem: Any + Copy + Bytes {}
+impl<T> Elem for T where T: Any + Copy + Bytes {}
 
 /// Buffer of plain old data. The data is stored as an array of bytes (`Vec<u8>`).
 ///
 /// `VecCopy` keeps track of the type stored within via an explicit `TypeId` member. This allows
 /// one to hide the type from the compiler and check it only when necessary. It is particularly
 /// useful when the type of data is determined at runtime (e.g. when parsing numeric data).
+///
+/// # Safety
+///
+/// It is assumed that any Rust type has a valid representation in bytes. This library has an
+/// inherently more relaxed requirement than crates like [`zerocopy`] or [`bytemuck`] since the
+/// representative bytes cannot be modified or inspected by the safe API exposed by this library,
+/// they can only be copied.
+///
+/// Further, the bytes representing a type are never interpreted as
+/// anything other than a type with an identical `TypeId`, which are assumed to have an identical
+/// memory layout throughout the execution of the program.
+///
+/// Although serializing is enabled via the `serde` feature, deserializing this type in a program
+/// compiled into a different binary may cause undefined behavior. Deserializing this type should be
+/// done using the same binary because `TypeId` values could change between Rust compiler versions,
+/// architectures or other variables.
+///
+/// [`bytemuck`]: https://crates.io/crates/bytemuck
+/// [`zerocopy`]: https://crates.io/crates/zerocopy
 #[derive(Clone, Debug, PartialEq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VecCopy {
@@ -80,12 +107,12 @@ pub struct VecCopy {
 impl VecCopy {
     /// Construct an empty `VecCopy` with a specific type.
     #[inline]
-    pub fn with_type<T: Any + Copy>() -> Self {
-        // This is safe because `T` is `Copy`.
+    pub fn with_type<T: Elem>() -> Self {
+        // This is safe because `T` is `Elem`.
         unsafe { VecCopy::with_type_non_copy::<T>() }
     }
 
-    /// It is unsafe to construct a `VecCopy` if `T` is not `Copy`.
+    /// It is unsafe to construct a `VecCopy` if `T` is not `Elem`.
     #[inline]
     pub(crate) unsafe fn with_type_non_copy<T: Any>() -> Self {
         let element_size = size_of::<T>();
@@ -110,12 +137,12 @@ impl VecCopy {
     /// Construct an empty `VecCopy` with a capacity for a given number of typed elements. For
     /// setting byte capacity use `with_byte_capacity`.
     #[inline]
-    pub fn with_capacity<T: Any + Copy>(n: usize) -> Self {
-        // This is safe because `T` is `Copy`.
+    pub fn with_capacity<T: Elem>(n: usize) -> Self {
+        // This is safe because `T` is `Elem`.
         unsafe { VecCopy::with_capacity_non_copy::<T>(n) }
     }
 
-    /// It is unsafe to construct a `VecCopy` if `T` is not `Copy`.
+    /// It is unsafe to construct a `VecCopy` if `T` is not `Elem`.
     #[inline]
     pub(crate) unsafe fn with_capacity_non_copy<T: Any>(n: usize) -> Self {
         let element_size = size_of::<T>();
@@ -138,7 +165,7 @@ impl VecCopy {
     /// assert_eq!(buf_vec, vec![42usize; 8]);
     /// ```
     #[inline]
-    pub fn with_size<T: Any + Copy>(n: usize, def: T) -> Self {
+    pub fn with_size<T: Elem>(n: usize, def: T) -> Self {
         Self::from_vec(vec![def; n])
     }
 
@@ -153,12 +180,12 @@ impl VecCopy {
     /// let nu_vec: Vec<u8> = buf.into_vec().unwrap(); // Convert back into `Vec`
     /// assert_eq!(vec, nu_vec);
     /// ```
-    pub fn from_vec<T: Any + Copy>(vec: Vec<T>) -> Self {
-        // This is safe because `T` is `Copy`.
+    pub fn from_vec<T: Elem>(vec: Vec<T>) -> Self {
+        // This is safe because `T` is `Elem`.
         unsafe { Self::from_vec_non_copy(vec) }
     }
 
-    /// It is unsafe to call this for `T` that is not `Copy`.
+    /// It is unsafe to call this for `T` that is not `Elem`.
     pub(crate) unsafe fn from_vec_non_copy<T: Any>(vec: Vec<T>) -> Self {
         let element_size = size_of::<T>();
         assert_ne!(element_size, 0, "VecCopy doesn't support zero sized types.");
@@ -182,13 +209,13 @@ impl VecCopy {
 
     /// Construct a `VecCopy` from a given slice by copying the data.
     #[inline]
-    pub fn from_slice<T: Any + Copy>(slice: &[T]) -> Self {
+    pub fn from_slice<T: Elem>(slice: &[T]) -> Self {
         let mut vec = Vec::with_capacity(slice.len());
         vec.extend_from_slice(slice);
         Self::from_vec(vec)
     }
 
-    /// It is unsafe to call this for `T` that is not `Copy`.
+    /// It is unsafe to call this for `T` that is not `Elem`.
     #[inline]
     pub(crate) unsafe fn from_slice_non_copy<T: Any + Clone>(slice: &[T]) -> Self {
         let mut vec = Vec::with_capacity(slice.len());
@@ -204,7 +231,7 @@ impl VecCopy {
     ///
     /// This function has the similar properties to `Vec::resize`.
     #[inline]
-    pub fn resize<T: Any + Copy + Bytes>(&mut self, new_len: usize, value: T) -> Option<&mut Self> {
+    pub fn resize<T: Elem>(&mut self, new_len: usize, value: T) -> Option<&mut Self> {
         self.check_ref::<T>()?;
         let size_t = size_of::<T>();
         if new_len >= self.len() {
@@ -225,7 +252,7 @@ impl VecCopy {
     /// The `VecCopy` is extended if the given slice is larger than the number of elements
     /// already stored in this `VecCopy`.
     #[inline]
-    pub fn copy_from_slice<T: Any + Copy>(&mut self, slice: &[T]) -> &mut Self {
+    pub fn copy_from_slice<T: Elem>(&mut self, slice: &[T]) -> &mut Self {
         let element_size = size_of::<T>();
         assert_ne!(element_size, 0, "VecCopy doesn't support zero sized types.");
         let bins = slice.len() * element_size;
@@ -256,7 +283,7 @@ impl VecCopy {
     /// assert_eq!(buf.into_vec::<u8>().unwrap(), vec![0u8, 0, 0, 0, 0]);
     /// ```
     #[inline]
-    pub fn fill<T: Any + Copy>(&mut self, def: T) -> Option<&mut Self> {
+    pub fn fill<T: Elem>(&mut self, def: T) -> Option<&mut Self> {
         for v in self.iter_mut::<T>()? {
             *v = def;
         }
@@ -373,7 +400,7 @@ impl VecCopy {
     /// `Some(vec)` if type matched the internal type and `None` otherwise. This may be faster than
     /// `append_clone_to_vec`.
     #[inline]
-    pub fn append_to_vec<'a, T: Any + Copy>(&self, vec: &'a mut Vec<T>) -> Option<&'a mut Vec<T>> {
+    pub fn append_to_vec<'a, T: Elem>(&self, vec: &'a mut Vec<T>) -> Option<&'a mut Vec<T>> {
         let iter = self.iter()?;
         // Allocate only after we know the type is right to prevent unnecessary allocations.
         vec.reserve(self.len());
@@ -383,7 +410,7 @@ impl VecCopy {
 
     /// Copies contents of `self` into the given `Vec`.
     #[inline]
-    pub fn copy_into_vec<T: Any + Copy>(&self) -> Option<Vec<T>> {
+    pub fn copy_into_vec<T: Elem>(&self) -> Option<Vec<T>> {
         let mut vec = Vec::new();
         match self.append_to_vec(&mut vec) {
             Some(_) => Some(vec),
@@ -395,7 +422,7 @@ impl VecCopy {
     /// determine the type `T` automatically.
     #[inline]
     pub fn into_vec<T: Any>(self) -> Option<Vec<T>> {
-        // This is safe since `T` is Copy guaranteed at construction.
+        // This is safe since `T` is `Elem` guaranteed at construction.
         unsafe { self.check::<T>().map(|x| x.reinterpret_into_vec()) }
     }
 
@@ -417,7 +444,7 @@ impl VecCopy {
 
     /// Get `i`'th element of the buffer by value.
     #[inline]
-    pub fn get<T: Any + Copy>(&self, i: usize) -> Option<T> {
+    pub fn get<T: Elem>(&self, i: usize) -> Option<T> {
         assert!(i < self.len());
         let ptr = self.check_ref::<T>()?.data.as_ptr() as *const T;
         Some(unsafe { *ptr.add(i) })
@@ -582,15 +609,15 @@ impl VecCopy {
 
     #[cfg(feature = "numeric")]
     /// Cast a numeric `VecCopy` into the given output `Vec` type.
-    pub fn cast_into_vec<T: Copy>(self) -> Vec<T>
+    pub fn cast_into_vec<T>(self) -> Vec<T>
     where
-        T: Any + Copy + NumCast + Zero,
+        T: Elem + NumCast + Zero,
     {
         // Helper function (generic on the input) to convert the given VecCopy into Vec.
         unsafe fn convert_into_vec<I, O>(buf: VecCopy) -> Vec<O>
         where
             I: Any + NumCast,
-            O: Any + Copy + NumCast + Zero,
+            O: Elem + NumCast + Zero,
         {
             debug_assert_eq!(buf.element_type_id(), TypeId::of::<I>()); // Check invariant.
             buf.reinterpret_into_vec()
@@ -603,7 +630,7 @@ impl VecCopy {
 
     #[cfg(feature = "numeric")]
     /// Display the contents of this buffer reinterpreted in the given type.
-    unsafe fn reinterpret_display<T: Any + Copy + fmt::Display>(&self, f: &mut fmt::Formatter) {
+    unsafe fn reinterpret_display<T: Elem + fmt::Display>(&self, f: &mut fmt::Formatter) {
         debug_assert_eq!(self.element_type_id(), TypeId::of::<T>()); // Check invariant.
         for item in self.reinterpret_iter::<T>() {
             write!(f, "{} ", item).expect("Error occurred while writing an VecCopy.");
@@ -648,9 +675,6 @@ impl<'a> Extend<CopyValueRef<'a>> for VecCopy {
 impl VecCopy {
 
     /// Clones this `VecCopy` using the given function.
-    ///
-    /// This is useful for when the `VecCopy` is used as a raw buffer and stores data that is not
-    /// necessarily `Copy`.
     pub(crate) fn clone_with(&self, clone: impl FnOnce(&[u8]) -> Vec<u8>) -> Self {
         VecCopy {
             data: clone(&self.data),
@@ -676,7 +700,7 @@ impl VecCopy {
     /// It is assumed that that the buffer contains elements of type `T`, otherwise this function
     /// will cause undefined behavior.
     #[inline]
-    pub unsafe fn get_unchecked<T: Any + Copy>(&self, i: usize) -> T {
+    pub unsafe fn get_unchecked<T: Elem>(&self, i: usize) -> T {
         let ptr = self.data.as_ptr() as *const T;
         *ptr.add(i)
     }
@@ -691,7 +715,7 @@ impl VecCopy {
     /// It is assumed that that the buffer contains elements of type `T`, otherwise this function
     /// will cause undefined behavior.
     #[inline]
-    pub unsafe fn get_unchecked_ref<T: Any + Copy>(&self, i: usize) -> &T {
+    pub unsafe fn get_unchecked_ref<T: Elem>(&self, i: usize) -> &T {
         let ptr = self.data.as_ptr() as *const T;
         &*ptr.add(i)
     }
@@ -706,7 +730,7 @@ impl VecCopy {
     /// It is assumed that that the buffer contains elements of type `T`, otherwise this function
     /// will cause undefined behavior.
     #[inline]
-    pub unsafe fn get_unchecked_mut<T: Any + Copy>(&mut self, i: usize) -> &mut T {
+    pub unsafe fn get_unchecked_mut<T: Elem>(&mut self, i: usize) -> &mut T {
         let ptr = self.data.as_mut_ptr() as *mut T;
         &mut *ptr.add(i)
     }
@@ -898,7 +922,7 @@ impl VecCopy {
 /// Convert a `Vec<T>` to a `VecCopy`.
 impl<T> From<Vec<T>> for VecCopy
 where
-    T: Any + Copy,
+    T: Elem,
 {
     #[inline]
     fn from(vec: Vec<T>) -> VecCopy {
@@ -909,7 +933,7 @@ where
 /// Convert a `&[T]` to a `VecCopy`.
 impl<'a, T> From<&'a [T]> for VecCopy
 where
-    T: Any + Copy,
+    T: Elem,
 {
     #[inline]
     fn from(slice: &'a [T]) -> VecCopy {
@@ -920,7 +944,7 @@ where
 /// Convert a `VecCopy` to a `Option<Vec<T>>`.
 impl<T> Into<Option<Vec<T>>> for VecCopy
 where
-    T: Any + Copy,
+    T: Elem,
 {
     #[inline]
     fn into(self) -> Option<Vec<T>> {

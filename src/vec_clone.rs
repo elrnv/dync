@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::{
     any::{Any, TypeId},
     mem::ManuallyDrop,
@@ -5,7 +6,7 @@ use std::{
 };
 
 use crate::bytes::*;
-use crate::value::*;
+use crate::clone_value::*;
 use crate::VecCopy;
 use crate::traits::*;
 
@@ -381,16 +382,16 @@ impl VecClone {
 
     /// Get a reference to a value stored in this container at index `i`.
     #[inline]
-    pub fn value_ref(&self, i: usize) -> ValueRef {
+    pub fn value_ref(&self, i: usize) -> CloneValueRef {
         debug_assert!(i < self.len());
         // This call is safe since our buffer guarantees that the given bytes have the
         // corresponding TypeId.
-        unsafe { ValueRef::from_raw_parts(self.data.get_bytes(i), self.element_type_id()) }
+        unsafe { CloneValueRef::from_raw_parts(self.data.get_bytes(i), self.element_type_id()) }
     }
 
     /// Get a mutable reference to a value stored in this container at index `i`.
     #[inline]
-    pub fn value_mut(&mut self, i: usize) -> ValueMut {
+    pub fn value_mut(&mut self, i: usize) -> CloneValueMut {
         debug_assert!(i < self.len());
         let Self {
             data,
@@ -399,7 +400,7 @@ impl VecClone {
         } = self;
         let type_id = data.element_type_id();
         // Safety is guaranteed here by the value API.
-        unsafe { ValueMut::from_raw_parts(data.get_bytes_mut(i), type_id, clone_from_fn.0) }
+        unsafe { CloneValueMut::from_raw_parts(data.get_bytes_mut(i), type_id, clone_from_fn.0) }
     }
 
     /// Return an iterator over untyped value references stored in this buffer.
@@ -411,7 +412,7 @@ impl VecClone {
     /// # Examples
     ///
     /// ```
-    /// use data_buffer::*;
+    /// use data_buffer::vec_clone::*;
     /// use std::rc::Rc;
     /// let vec: Vec<_> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43].into_iter().map(Rc::new).collect();
     /// let mut buf = VecClone::from(vec); // Convert into VecCLone
@@ -424,7 +425,7 @@ impl VecClone {
     /// assert!((*sum - 77.44).abs() < 0.000001);
     /// ```
     #[inline]
-    pub fn iter_value_ref<'a>(&'a self) -> impl Iterator<Item = ValueRef<'a>> + 'a {
+    pub fn iter_value_ref<'a>(&'a self) -> impl Iterator<Item = CloneValueRef<'a>> + 'a {
         let &Self { ref data, .. } = self;
         let VecCopy {
             data,
@@ -432,7 +433,7 @@ impl VecClone {
             element_type_id,
         } = &**data;
         data.chunks_exact(*element_size)
-            .map(move |bytes| unsafe { ValueRef::from_raw_parts(bytes, *element_type_id) })
+            .map(move |bytes| unsafe { CloneValueRef::from_raw_parts(bytes, *element_type_id) })
     }
 
     /// Return an iterator over mutable untyped value references stored in this buffer.
@@ -443,7 +444,8 @@ impl VecClone {
     ///
     /// # Examples
     /// ```
-    /// use data_buffer::*;
+    /// use data_buffer::clone_value::*;
+    /// use data_buffer::vec_clone::*;
     /// use std::rc::Rc;
     /// let vec: Vec<_> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43].into_iter().map(Rc::new).collect();
     /// let mut buf = VecClone::from(vec.clone()); // Convert into buffer
@@ -451,7 +453,7 @@ impl VecClone {
     /// // Overwrite all vallues in buf to the following Rc.
     /// let rc = Rc::new(100.0f32);
     /// for mut val in buf.iter_value_mut() {
-    ///     val.clone_from(ValueRef::new(&rc));
+    ///     val.clone_from(CloneValueRef::new(&rc));
     /// }
     ///
     /// // As a result the data in `rc` has been referenced 6 times.
@@ -459,7 +461,7 @@ impl VecClone {
     /// assert_eq!(buf.into_vec::<Rc<f32>>().unwrap(), vec![rc; 5]);
     /// ```
     #[inline]
-    pub fn iter_value_mut<'a>(&'a mut self) -> impl Iterator<Item = ValueMut<'a>> + 'a {
+    pub fn iter_value_mut<'a>(&'a mut self) -> impl Iterator<Item = CloneValueMut<'a>> + 'a {
         let &mut Self {
             ref mut data,
             clone_from_fn,
@@ -472,7 +474,7 @@ impl VecClone {
         } = &mut **data;
         data.chunks_exact_mut(*element_size)
             .map(move |bytes| unsafe {
-                ValueMut::from_raw_parts(bytes, *element_type_id, clone_from_fn.0)
+                CloneValueMut::from_raw_parts(bytes, *element_type_id, clone_from_fn.0)
             })
     }
 }
@@ -563,7 +565,7 @@ mod tests {
             let mut rc = Rc::clone(&orig);
             assert_eq!(Rc::strong_count(&rc), 2);
             for val in buf.iter_value_ref() {
-                ValueMut::new(&mut rc).clone_from(val);
+                CloneValueMut::new(&mut rc).clone_from(val);
             }
             assert_eq!(Rc::strong_count(&orig), 1);
             assert_eq!(Rc::strong_count(&rc), 3);

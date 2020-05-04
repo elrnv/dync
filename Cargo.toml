@@ -30,6 +30,7 @@ criterion = "0.3"
 [features]
 numeric = ["num-traits"]
 serde_all = ["serde", "serde_bytes"]
+testing = []
 
 [[bench]]
 name = "type_erasure"
