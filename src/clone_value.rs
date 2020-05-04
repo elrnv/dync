@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use crate::bytes::*;
 use crate::traits::*;
-use crate::vec_clone::Elem as CloneElem;
 use crate::value::GetBytesRef;
+use crate::vec_clone::Elem as CloneElem;
 
 #[derive(Debug)]
 pub struct BoxValue {
