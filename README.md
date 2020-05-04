@@ -4,7 +4,7 @@ An efficient alternative to `dyn Trait` for containerized types
 
 [![On crates.io](https://img.shields.io/crates/v/dync.svg)](https://crates.io/crates/dync)
 [![On docs.rs](https://docs.rs/dync/badge.svg)](https://docs.rs/dync/)
-[![Build status](https://travis-ci.org/elrnv/dync.svg?branch=master)](https://travis-ci.org/elrnv/dync)
+[![Build status](https://github.com/elrnv/dync/workflows/CI/badge.svg)](https://github.com/elrnv/dync/actions?query=workflow%3ARust)
 
 # License
 

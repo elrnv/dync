@@ -4,11 +4,12 @@ version = "0.1.0"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
-description = "Derive macros for creating `dync` traits"
+description = "Attribute macros for producing `dync` compatible traits"
+readme = "README.md"
 
-homepage = "https://github.com/elrnv/buffer"
-repository = "https://github.com/elrnv/buffer"
-keywords = ["buffer", "io", "data"]
+homepage = "https://github.com/elrnv/dync"
+repository = "https://github.com/elrnv/dync"
+keywords = ["dyn", "trait", "any"]
 
 [lib]
 proc-macro = true
