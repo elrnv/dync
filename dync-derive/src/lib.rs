@@ -357,7 +357,7 @@ fn dync_fn_sig(sig: Signature) -> Signature {
     );
 
     let dync_name = format!("{}_bytes", sig.ident);
-    let dync_ident = Ident::new(&dync_name, sig.ident.span().clone());
+    let dync_ident = Ident::new(&dync_name, sig.ident.span());
 
     let mut generics = GenericsMap::new();
 
@@ -557,7 +557,7 @@ fn check_for_unsupported_generics(ty: &Type, generics: &GenericsMap) {
             if path.path.leading_colon.is_none() && path.path.segments.len() == 1 {
                 let seg = path.path.segments.first().unwrap();
                 assert!(
-                    seg.arguments.is_empty() && "Self".to_string() == seg.ident.to_string(),
+                    seg.arguments.is_empty() && seg.ident == "Self",
                     "using Self in this context is not supported by dync_trait"
                 );
             }
@@ -638,7 +638,7 @@ fn self_type_path_into(path: TypePath, into_ty: Type) -> Type {
     if path.path.leading_colon.is_none() && path.path.segments.len() == 1 {
         let seg = path.path.segments.first().unwrap();
         if seg.arguments.is_empty() // Self types wouldn't have arguments.
-            && "Self".to_string() == seg.ident.to_string()
+            && seg.ident == "Self"
         {
             into_ty
         } else {
@@ -651,11 +651,10 @@ fn self_type_path_into(path: TypePath, into_ty: Type) -> Type {
 
 // Convert reference or pointer to self into a reference to bytes or pass through
 fn self_to_byte_slice(ty: Type) -> Type {
-    let res = match ty {
+    match ty {
         Type::Path(path) => self_type_path_into(path, syn::parse(quote! { [u8] }.into()).unwrap()),
         other => other,
-    };
-    res
+    }
 }
 
 // Check if there are instances of Self in the given type, and panic if there are.
@@ -680,7 +679,7 @@ fn check_for_unsupported_self(ty: &Type) {
             if path.path.leading_colon.is_none() && path.path.segments.len() == 1 {
                 let seg = path.path.segments.first().unwrap();
                 assert!(
-                    seg.arguments.is_empty() && "Self".to_string() == seg.ident.to_string(),
+                    seg.arguments.is_empty() && seg.ident == "Self",
                     "using Self in this context is not supported by dync_trait"
                 );
             }

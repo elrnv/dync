@@ -5,13 +5,12 @@ use std::{
     slice,
 };
 
-use crate::bytes::*;
 use crate::clone_value::*;
 use crate::traits::*;
 use crate::VecCopy;
 
-pub trait Elem: Any + Bytes + CloneBytes + DropBytes {}
-impl<T> Elem for T where T: Any + Bytes + CloneBytes + DropBytes {}
+pub trait Elem: Any + CloneBytes + DropBytes {}
+impl<T> Elem for T where T: Any + CloneBytes + DropBytes {}
 
 /// This container is a WIP, not to be used in production.
 #[derive(Debug, PartialEq, Hash)]

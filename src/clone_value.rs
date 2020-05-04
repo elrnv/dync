@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::bytes::*;
 use crate::traits::*;
 use crate::vec_clone::Elem as CloneElem;
+use crate::value::GetBytesRef;
 
 #[derive(Debug)]
 pub struct BoxValue {
@@ -101,7 +102,7 @@ impl RcValue {
     impl_value_base!();
 
     #[inline]
-    pub fn new<T: Bytes + DropBytes>(typed: Rc<T>) -> RcValue {
+    pub fn new<T: DropBytes + 'static>(typed: Rc<T>) -> RcValue {
         RcValue {
             bytes: ManuallyDrop::new(Bytes::rc_into_rc_bytes(typed)),
             type_id: TypeId::of::<T>(),
@@ -121,7 +122,7 @@ impl RcValue {
 
     /// Downcast this value reference into an `Rc<T>` type. Return `None` if the downcast fails.
     #[inline]
-    pub fn downcast<T: Bytes>(self) -> Option<Rc<T>> {
+    pub fn downcast<T: 'static>(self) -> Option<Rc<T>> {
         // This is safe since we check that self.bytes represent a `T`.
         self.downcast_with::<T, _, _>(|mut b| unsafe {
             Bytes::rc_from_rc_bytes(ManuallyDrop::take(&mut b.bytes))
@@ -129,7 +130,7 @@ impl RcValue {
     }
 }
 
-impl<T: Bytes + 'static> From<Rc<T>> for RcValue {
+impl<T: 'static> From<Rc<T>> for RcValue {
     #[inline]
     fn from(rc: Rc<T>) -> RcValue {
         RcValue::new(rc)
@@ -160,7 +161,7 @@ impl ArcValue {
     impl_value_base!();
 
     #[inline]
-    pub fn new<T: Bytes>(typed: Arc<T>) -> ArcValue {
+    pub fn new<T: 'static>(typed: Arc<T>) -> ArcValue {
         ArcValue {
             bytes: ManuallyDrop::new(Bytes::arc_into_arc_bytes(typed)),
             type_id: TypeId::of::<T>(),
@@ -180,7 +181,7 @@ impl ArcValue {
 
     /// Downcast this value reference into an `Arc<T>` type. Return `None` if the downcast fails.
     #[inline]
-    pub fn downcast<T: Bytes>(self) -> Option<Arc<T>> {
+    pub fn downcast<T: 'static>(self) -> Option<Arc<T>> {
         // This is safe since we check that self.bytes represent a `T`.
         self.downcast_with::<T, _, _>(|mut b| unsafe {
             Bytes::arc_from_arc_bytes(ManuallyDrop::take(&mut b.bytes))
@@ -188,7 +189,7 @@ impl ArcValue {
     }
 }
 
-impl<T: Bytes + 'static> From<Arc<T>> for ArcValue {
+impl<T: 'static> From<Arc<T>> for ArcValue {
     #[inline]
     fn from(arc: Arc<T>) -> ArcValue {
         ArcValue::new(arc)
@@ -226,7 +227,7 @@ impl<'a> CloneValueRef<'a> {
 
     /// Downcast this value reference into a borrowed `T` type. Return `None` if the downcast fails.
     #[inline]
-    pub fn downcast<T: Bytes + 'static>(self) -> Option<&'a T> {
+    pub fn downcast<T: 'static>(self) -> Option<&'a T> {
         // This is safe since we check that self.bytes represent a `T`.
         self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes(b.bytes) })
     }
