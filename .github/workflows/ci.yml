@@ -30,7 +30,7 @@ jobs:
         run: cargo test --all-features --verbose
 
   clippy:
-    name: "Clippy: stable"
+    name: "Clippy (stable)"
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -46,7 +46,7 @@ jobs:
           token: ${{ github.token }}
 
   rustfmt:
-    name: "Format: stable"
+    name: "Format (stable)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
