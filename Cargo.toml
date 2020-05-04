@@ -10,7 +10,7 @@ homepage = "https://github.com/elrnv/dync"
 repository = "https://github.com/elrnv/dync"
 readme = "README.md"
 
-keywords = ["buffer", "io", "data"]
+keywords = ["dyn", "trait", "vec", "any"]
 
 [badges]
 travis-ci = { repository = "elrnv/buffer", branch = "master" }
