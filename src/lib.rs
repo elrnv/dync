@@ -385,14 +385,14 @@ impl VecCopy {
     /// }
     /// ```
     #[inline]
-    pub fn iter<'a, T: Any>(&'a self) -> Option<slice::Iter<T>> {
+    pub fn iter<T: Any>(&self) -> Option<slice::Iter<T>> {
         self.as_slice::<T>().map(|x| x.iter())
     }
 
     /// Return an iterator to a mutable slice representing typed data.
     /// Returns `None` if the given type `T` doesn't match the internal.
     #[inline]
-    pub fn iter_mut<'a, T: Any>(&'a mut self) -> Option<slice::IterMut<T>> {
+    pub fn iter_mut<T: Any>(&mut self) -> Option<slice::IterMut<T>> {
         self.as_mut_slice::<T>().map(|x| x.iter_mut())
     }
 

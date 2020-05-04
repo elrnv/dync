@@ -489,9 +489,7 @@ impl<'a, V> ValueRef<'a, V> {
         V: HasClone + Clone,
     {
         Value {
-            bytes: ManuallyDrop::new(unsafe {
-                self.vtable.as_ref().clone_fn()(&self.bytes)
-            }),
+            bytes: ManuallyDrop::new(unsafe { self.vtable.as_ref().clone_fn()(&self.bytes) }),
             type_id: self.type_id,
             vtable: Arc::from(self.vtable.as_ref().clone()),
         }

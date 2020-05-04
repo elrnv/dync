@@ -15,7 +15,6 @@ pub trait Elem: Any + DropBytes {}
 impl<T> Elem for T where T: Any + DropBytes {}
 
 /// This container is a WIP, not to be used in production.
-#[derive(Hash)]
 pub struct VecDyn<V> {
     data: ManuallyDrop<VecCopy>,
     vtable: Arc<(DropFn, V)>,
@@ -53,6 +52,14 @@ impl<V: HasPartialEq> PartialEq for VecDyn<V> {
         self.iter()
             .zip(other.iter())
             .all(|(this, that)| this == that)
+    }
+}
+
+impl<V: HasEq> Eq for VecDyn<V> { }
+
+impl<V: HasHash> std::hash::Hash for VecDyn<V> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.iter().for_each(|elem| elem.hash(state));
     }
 }
 
@@ -138,7 +145,7 @@ impl<V> VecDyn<V> {
     /// returned.
     #[inline]
     pub fn push<T: Elem>(&mut self, element: T) -> Option<&mut Self> {
-        if let Some(_) = self.data.push(element) {
+        if self.data.push(element).is_some() {
             Some(self)
         } else {
             None
@@ -149,7 +156,7 @@ impl<V> VecDyn<V> {
     /// if the type matches and `None` otherwise.
     #[inline]
     pub fn check<T: Elem>(self) -> Option<Self> {
-        if let Some(_) = self.data.check_ref::<T>() {
+        if self.data.check_ref::<T>().is_some() {
             Some(self)
         } else {
             None
@@ -166,8 +173,8 @@ impl<V> VecDyn<V> {
     /// Check if the current buffer contains elements of the specified type. Same as `check_ref`
     /// but consumes and produces a mut reference to self.
     #[inline]
-    pub fn check_mut<'a, T: Elem>(&'a mut self) -> Option<&'a mut Self> {
-        if let Some(_) = self.data.check_mut::<T>() {
+    pub fn check_mut<T: Elem>(&mut self) -> Option<&mut Self> {
+        if self.data.check_mut::<T>().is_some() {
             Some(self)
         } else {
             None
@@ -212,7 +219,7 @@ impl<V> VecDyn<V> {
     ///
     /// Returns `None` if the given type `T` doesn't match the internal.
     #[inline]
-    pub fn iter_as<'a, T: Elem>(&'a self) -> Option<slice::Iter<T>> {
+    pub fn iter_as<T: Elem>(&self) -> Option<slice::Iter<T>> {
         self.data.iter::<T>()
     }
 
@@ -220,7 +227,7 @@ impl<V> VecDyn<V> {
     ///
     /// Returns `None` if the given type `T` doesn't match the internal.
     #[inline]
-    pub fn iter_mut_as<'a, T: Elem>(&'a mut self) -> Option<slice::IterMut<T>> {
+    pub fn iter_mut_as<T: Elem>(&mut self) -> Option<slice::IterMut<T>> {
         self.data.iter_mut::<T>()
     }
 
@@ -272,7 +279,7 @@ impl<V> VecDyn<V> {
     #[inline]
     pub fn append(&mut self, buf: &mut VecDyn<V>) -> Option<&mut Self> {
         // It is sufficient to move the bytes, no clones or drops are necessary here.
-        if let Some(_) = self.data.append(&mut buf.data) {
+        if self.data.append(&mut buf.data).is_some() {
             Some(self)
         } else {
             None
@@ -331,7 +338,8 @@ impl<V> VecDyn<V> {
     /// requires the contained value to be `Clone`.
     #[inline]
     pub fn push_cloned(&mut self, value: ValueRef<V>) -> Option<&mut Self>
-        where V: HasClone 
+    where
+        V: HasClone,
     {
         if self.element_type_id() == value.value_type_id() {
             let orig_len = self.data.data.len();
@@ -379,7 +387,7 @@ impl<V> VecDyn<V> {
 
     /// Get a mutable reference to a value stored in this container at index `i`.
     #[inline]
-    pub fn get_mut<'a>(&'a mut self, i: usize) -> ValueMut<'a, V> {
+    pub fn get_mut(&mut self, i: usize) -> ValueMut<V> {
         debug_assert!(i < self.len());
         let Self { data, vtable } = self;
         let type_id = data.element_type_id();
