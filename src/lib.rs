@@ -56,13 +56,13 @@ pub(crate) mod serde_helpers {
     }
 }
 
-pub use value::{CopyValueRef, CopyValueMut};
-pub use bytes::*;
+use bytes::Bytes;
 pub use value::*;
+pub use value::{CopyValueMut, CopyValueRef};
 pub use vec_dyn::*;
 
-pub trait Elem: Any + Copy + Bytes {}
-impl<T> Elem for T where T: Any + Copy + Bytes {}
+pub trait Elem: Any + Copy {}
+impl<T> Elem for T where T: Any + Copy {}
 
 /// Buffer of plain old data. The data is stored as an array of bytes (`Vec<u8>`).
 ///
@@ -296,7 +296,7 @@ impl VecCopy {
     /// stored by this buffer, then the modified buffer is returned via a mutable reference.
     /// Otherwise, `None` is returned.
     #[inline]
-    pub fn push<T: Bytes + Any>(&mut self, element: T) -> Option<&mut Self> {
+    pub fn push<T: Any>(&mut self, element: T) -> Option<&mut Self> {
         self.check_ref::<T>()?;
         let bytes = element.as_bytes();
         let result = unsafe { self.push_bytes(bytes) };
@@ -673,7 +673,6 @@ impl<'a> Extend<CopyValueRef<'a>> for VecCopy {
  */
 
 impl VecCopy {
-
     /// Clones this `VecCopy` using the given function.
     pub(crate) fn clone_with(&self, clone: impl FnOnce(&[u8]) -> Vec<u8>) -> Self {
         VecCopy {

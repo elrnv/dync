@@ -6,15 +6,34 @@
 #![allow(dead_code)]
 
 use std::any::{Any, TypeId};
-use std::rc::Rc;
-use std::sync::Arc;
+use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::mem::ManuallyDrop;
-use std::fmt;
+use std::sync::Arc;
 
-use crate::Elem;
-use crate::traits::*;
 use crate::bytes::*;
+use crate::traits::*;
+use crate::Elem;
+
+#[derive(Debug)]
+pub enum Error {
+    /// Value could not fit into a single pointer sized word.
+    ValueTooLarge,
+}
+
+impl fmt::Display for Error {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Error::ValueTooLarge => {
+                write!(f, "Value could not fit into a single pointer sized word.\nTry constructing a BoxValue instead.")?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for Error {}
 
 // Implement the basis for all value types.
 macro_rules! impl_value_base {
@@ -22,7 +41,7 @@ macro_rules! impl_value_base {
         /// Get the size of the value pointed-to by this reference.
         #[inline]
         pub fn size(&self) -> usize {
-            self.bytes.as_ref().len()
+            self.bytes.get_bytes_ref().len()
         }
 
         /// Get the `TypeId` of the referenced value.
@@ -67,186 +86,265 @@ pub trait HasPartialEq {
     fn eq_fn(&self) -> &EqFnType;
 }
 
+pub trait HasEq: HasPartialEq {}
+
 pub trait HasDebug {
     fn fmt_fn(&self) -> &FmtFnType;
 }
 
 impl<T> HasDrop for (DropFn, T) {
     #[inline]
-    fn drop_fn(&self) -> &DropFn { &self.0 }
+    fn drop_fn(&self) -> &DropFn {
+        &self.0
+    }
 }
 
-// Helper trait for dropping bytes in pointer containers.
-pub trait GetBytesMut {
-    fn get_bytes_mut(&mut self) -> Option<&mut [u8]>;
+// The following forwarding impls make it more straightforward to call the Has* methods on the
+// (DropFn, V) vtable, although they are not strictly necessary.
+
+impl<V: HasClone> HasClone for (DropFn, V) {
+    #[inline]
+    fn clone_fn(&self) -> &CloneFnType {
+        &self.1.clone_fn()
+    }
+    #[inline]
+    fn clone_from_fn(&self) -> &CloneFromFnType {
+        &self.1.clone_from_fn()
+    }
 }
 
+impl<V: HasHash> HasHash for (DropFn, V) {
+    #[inline]
+    fn hash_fn(&self) -> &HashFnType {
+        &self.1.hash_fn()
+    }
+}
+
+impl<V: HasPartialEq> HasPartialEq for (DropFn, V) {
+    #[inline]
+    fn eq_fn(&self) -> &EqFnType {
+        &self.1.eq_fn()
+    }
+}
+
+impl<V: HasEq> HasEq for (DropFn, V) {}
+
+impl<V: HasDebug> HasDebug for (DropFn, V) {
+    #[inline]
+    fn fmt_fn(&self) -> &FmtFnType {
+        &self.1.fmt_fn()
+    }
+}
+
+// Helper trait for calling trait functions that take bytes.
+// Note that using SmallValue is currently only beneficial when the trait functions don't take
+// it by value, as otherwise we would need to allocate a new Box.
+pub trait GetBytesRef {
+    fn get_bytes_ref(&self) -> &[u8];
+}
+pub trait GetBytesMut: GetBytesRef {
+    fn get_bytes_mut(&mut self) -> &mut [u8];
+}
+pub trait GetBytes: GetBytesMut {
+    fn get_bytes(self) -> Box<[u8]>;
+}
+
+impl GetBytesRef for Box<[u8]> {
+    #[inline]
+    fn get_bytes_ref(&self) -> &[u8] {
+        &*self
+    }
+}
 impl GetBytesMut for Box<[u8]> {
-    fn get_bytes_mut(&mut self) -> Option<&mut [u8]> {
-        Some(&mut *self)
+    #[inline]
+    fn get_bytes_mut(&mut self) -> &mut [u8] {
+        &mut *self
+    }
+}
+impl GetBytes for Box<[u8]> {
+    #[inline]
+    fn get_bytes(self) -> Box<[u8]> {
+        self
     }
 }
 
-impl GetBytesMut for Rc<[u8]> {
-    fn get_bytes_mut(&mut self) -> Option<&mut [u8]> {
-        Rc::get_mut(self)
+impl GetBytesRef for usize {
+    #[inline]
+    fn get_bytes_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+impl GetBytesMut for usize {
+    #[inline]
+    fn get_bytes_mut(&mut self) -> &mut [u8] {
+        self.as_bytes_mut()
+    }
+}
+impl GetBytes for usize {
+    #[inline]
+    fn get_bytes(self) -> Box<[u8]> {
+        // This causes an additional allocation for every function call that accepts self by value.
+        // TODO: Figure out how to eliminate this overhead.
+        Bytes::box_into_box_bytes(Box::new(self))
     }
 }
 
-impl GetBytesMut for Arc<[u8]> {
-    fn get_bytes_mut(&mut self) -> Option<&mut [u8]> {
-        Arc::get_mut(self)
+impl GetBytesRef for [u8] {
+    #[inline]
+    fn get_bytes_ref(&self) -> &[u8] {
+        self
+    }
+}
+impl GetBytesMut for [u8] {
+    #[inline]
+    fn get_bytes_mut(&mut self) -> &mut [u8] {
+        self
     }
 }
 
-pub struct DynValue<B, V> where B: GetBytesMut {
+pub struct Value<B, V>
+where
+    B: GetBytesMut,
+{
     pub(crate) bytes: ManuallyDrop<B>,
     pub(crate) type_id: TypeId,
     pub(crate) vtable: Arc<(DropFn, V)>,
 }
 
-//pub type PtrDynValue<V> = DynValue<usize, V>;
-//pub type BoxDynValue<V> = DynValue<Box<[u8]>, V>;
-//pub type RcDynValue<V> = DynValue<Rc<[u8]>, V>;
-//pub type ArcDynValue<V> = DynValue<Arc<[u8]>, V>;
-
-impl<B: GetBytesMut, V> DynValue<B, V> {
+//pub type SmallValue<V> = Value<usize, V>;
+pub type BoxValue<V> = Value<Box<[u8]>, V>;
+//pub type RcValue<V> = Value<Rc<[u8]>, V>;
+//pub type ArcValue<V> = Value<Arc<[u8]>, V>;
+/*
+impl<V> SmallValue<V> {
     #[inline]
-    pub fn new<T: Any + IntoRaw<B> + DropBytes + Dyn<VTable = V>>(value: T) -> DynValue<B, V> {
-        DynValue {
-            bytes: ManuallyDrop::new(value.into_raw()),
+    pub fn small<T: Any + DropBytes>(value: T) -> Option<Value<usize, V>>
+        where V: VTable<T>
+    {
+        value.try_into_usize().map(|usized_value| Value {
+            bytes: ManuallyDrop::new(usized_value),
             type_id: TypeId::of::<T>(),
-            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
+            vtable: Arc::new((DropFn(T::drop_bytes), V::build_vtable())),
+        })
+    }
+    /// Create a new `SmallValue` from a `usize` and an associated `TypeId`.
+    ///
+    /// # Safety
+    ///
+    /// The given bytes must be the correct representation of the type given `TypeId`.
+    #[inline]
+    pub(crate) unsafe fn from_raw_parts(
+        bytes: usize,
+        type_id: TypeId,
+        vtable: Arc<(DropFn, V)>,
+    ) -> Value<usize, V> {
+        Value {
+            bytes: ManuallyDrop::new(bytes),
+            type_id,
+            vtable,
         }
     }
 }
-//impl<V> BoxDynValue<V> {
-//    #[inline]
-//    pub fn new<T: Any + DropBytes + Dyn<VTable = V>>(value: Box<T>) -> DynValue<Box<[u8]>, V> {
-//        DynValue {
-//            bytes: ManuallyDrop::new(Bytes::box_into_box_bytes(value)),
-//            type_id: TypeId::of::<T>(),
-//            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
-//        }
-//    }
-//}
-//impl<V> RcDynValue<V> {
-//    #[inline]
-//    pub fn new<T: Any + DropBytes + Dyn<VTable = V>>(value: Rc<T>) -> DynValue<Rc<[u8]>, V> {
-//        DynValue {
-//            bytes: ManuallyDrop::new(Bytes::rc_into_rc_bytes(value)),
-//            type_id: TypeId::of::<T>(),
-//            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
-//        }
-//    }
-//}
-//impl<V> ArcDynValue<V> {
-//    #[inline]
-//    pub fn new<T: Any + DropBytes + Dyn<VTable = V>>(value: Arc<T>) -> DynValue<Arc<[u8]>, V> {
-//        DynValue {
-//            bytes: ManuallyDrop::new(Bytes::arc_into_arc_bytes(value)),
-//            type_id: TypeId::of::<T>(),
-//            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
-//        }
-//    }
-//}
+*/
 
-impl<B: GetBytesMut + AsRef<[u8]>, V: HasDebug> fmt::Debug for DynValue<B, V> {
+impl<V> BoxValue<V> {
+    #[inline]
+    pub fn new<T: Any + DropBytes>(value: T) -> Value<Box<[u8]>, V>
+    where
+        V: VTable<T>,
+    {
+        Value {
+            bytes: ManuallyDrop::new(Bytes::box_into_box_bytes(Box::new(value))),
+            type_id: TypeId::of::<T>(),
+            vtable: Arc::new((DropFn(T::drop_bytes), V::build_vtable())),
+        }
+    }
+    /// Create a new `SmallValue` from boxed bytes and an associated `TypeId`.
+    ///
+    /// # Safety
+    ///
+    /// The given bytes must be the correct representation of the type given `TypeId`.
+    #[inline]
+    pub(crate) unsafe fn from_raw_parts(
+        bytes: Box<[u8]>,
+        type_id: TypeId,
+        vtable: Arc<(DropFn, V)>,
+    ) -> Value<Box<[u8]>, V> {
+        Value {
+            bytes: ManuallyDrop::new(bytes),
+            type_id,
+            vtable,
+        }
+    }
+}
+
+impl<B: GetBytesMut, V: HasDebug> fmt::Debug for Value<B, V> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        unsafe {
-            self.vtable.1.fmt_fn()(self.bytes.as_ref(), f)
-        }
+        unsafe { self.vtable.1.fmt_fn()(self.bytes.get_bytes_ref(), f) }
     }
 }
 
-
-impl<V: HasClone> Clone for DynValue<Box<[u8]>, V> {
+impl<V: HasClone> Clone for Value<Box<[u8]>, V> {
     #[inline]
-    fn clone(&self) -> DynValue<Box<[u8]>, V> {
-        DynValue {
-            bytes: ManuallyDrop::new(unsafe { self.vtable.1.clone_fn()(self.bytes.as_ref()) }),
+    fn clone(&self) -> Value<Box<[u8]>, V> {
+        Value {
+            bytes: ManuallyDrop::new(unsafe {
+                self.vtable.1.clone_fn()(self.bytes.get_bytes_ref())
+            }),
             type_id: self.type_id,
             vtable: Arc::clone(&self.vtable),
         }
     }
 }
 
-impl<V> Clone for DynValue<Rc<[u8]>, V> {
-    #[inline]
-    fn clone(&self) -> DynValue<Rc<[u8]>, V> {
-        DynValue {
-            bytes: ManuallyDrop::new(Rc::clone(&self.bytes)),
-            type_id: self.type_id,
-            vtable: Arc::clone(&self.vtable),
-        }
-    }
-}
-
-impl<V> Clone for DynValue<Arc<[u8]>, V> {
-    #[inline]
-    fn clone(&self) -> DynValue<Arc<[u8]>, V> {
-        DynValue {
-            bytes: ManuallyDrop::new(Arc::clone(&self.bytes)),
-            type_id: self.type_id,
-            vtable: Arc::clone(&self.vtable),
-        }
-    }
-}
-
-impl<B: GetBytesMut, V> Drop for DynValue<B, V> {
+impl<B: GetBytesMut, V> Drop for Value<B, V> {
     #[inline]
     fn drop(&mut self) {
         unsafe {
-            // If we have unique access, drop the contents.
-            if let Some(bytes) = self.bytes.get_bytes_mut() {
-                self.vtable.drop_fn().0(bytes)
-            }
-            // Now drop the Rc<[u8]>. This is safe because self will not be used after this.
-            let _ = ManuallyDrop::take(&mut self.bytes);
+            let mut bytes = ManuallyDrop::take(&mut self.bytes);
+            self.vtable.drop_fn().0(bytes.get_bytes_mut())
         }
     }
 }
 
-impl<B: GetBytesMut + AsRef<[u8]>, V: HasPartialEq> PartialEq for DynValue<B, V> {
+impl<B: GetBytesMut, V: HasPartialEq> PartialEq for Value<B, V> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        unsafe {
-            self.vtable.1.eq_fn()(self.bytes.as_ref(), other.bytes.as_ref())
-        }
+        unsafe { self.vtable.1.eq_fn()(self.bytes.get_bytes_ref(), other.bytes.get_bytes_ref()) }
     }
 }
 
-impl<B: GetBytesMut + AsRef<[u8]>, V: HasPartialEq> Eq for DynValue<B, V> { }
+impl<B: GetBytesMut, V: HasPartialEq> Eq for Value<B, V> {}
 
-impl<B: GetBytesMut + AsRef<[u8]>, V: HasHash> Hash for DynValue<B, V> {
+impl<B: GetBytesMut, V: HasHash> Hash for Value<B, V> {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         unsafe {
-            self.vtable.1.hash_fn()(self.bytes.as_ref(), state);
+            self.vtable.1.hash_fn()(self.bytes.get_bytes_ref(), state);
         }
     }
 }
 
-/// `Dyn` defines a type that can be converted into a virtual function table.
+/// `VTable` defines a type that represents a virtual function table for some type `T`.
 ///
-/// This is different than a type that can be turned into a trait object like `Box<dyn Any>`
-/// because it decouples the type's behavior from the data it contains.
+/// `T` is different than a type that can be turned into a trait object like `Box<dyn Any>`
+/// because a `VTable` effectively decouples the type's behaviour from the data it contains.
 ///
 /// This mechanism allows the virtual function table to be attached to a homogeneous container, to
 /// prevent storing duplicates of these tables for each type instance stored in the container.
 ///
 /// This is precisely how it is used to build `VecDyn<V>`, which is generic over the virtual table
 /// rather than the type itself.
-pub trait Dyn {
-    type VTable;
-    fn build_vtable() -> Self::VTable;
+pub trait VTable<T> {
+    fn build_vtable() -> Self;
 }
 
-impl<B: GetBytesMut + AsRef<[u8]>, V> DynValue<B, V> {
+impl<B: GetBytes, V> Value<B, V> {
     impl_value_base!();
 }
 
-impl<V> DynValue<Box<[u8]>, V> {
+impl<V> Value<Box<[u8]>, V> {
     /// Downcast this value reference into a boxed `T` type. Return `None` if the downcast fails.
     #[inline]
     pub fn downcast<T: 'static>(self) -> Option<Box<T>> {
@@ -257,50 +355,88 @@ impl<V> DynValue<Box<[u8]>, V> {
     }
 }
 
-impl<V> DynValue<Rc<[u8]>, V> {
+impl<V> Value<usize, V> {
     /// Downcast this value reference into a boxed `T` type. Return `None` if the downcast fails.
     #[inline]
-    pub fn downcast<T: 'static>(self) -> Option<Rc<T>> {
+    pub fn downcast<T: 'static>(mut self) -> Option<T> {
         // This is safe since we check that self.bytes represent a `T`.
-        self.downcast_with::<T, _, _>(|mut b| unsafe { Bytes::rc_from_rc_bytes(ManuallyDrop::take(&mut b.bytes)) })
+        if self.is::<T>() {
+            unsafe { Bytes::try_from_usize(ManuallyDrop::take(&mut self.bytes)) }
+        } else {
+            None
+        }
     }
 }
 
-impl<V> DynValue<Arc<[u8]>, V> {
-    /// Downcast this value reference into a boxed `T` type. Return `None` if the downcast fails.
+/// A VTable reference type.
+///
+/// Note we always need Drop because it's possible to clone ValueRef's contents, which need to know
+/// how to drop themselves.
+#[derive(Clone, Debug)]
+pub(crate) enum VTableRef<'a, V> {
+    Ref(&'a (DropFn, V)),
+    Owned(Box<(DropFn, V)>),
+}
+
+impl<'a, V> AsRef<(DropFn, V)> for VTableRef<'a, V> {
     #[inline]
-    pub fn downcast<T: 'static>(self) -> Option<Arc<T>> {
-        // This is safe since we check that self.bytes represent a `T`.
-        self.downcast_with::<T, _, _>(|mut b| unsafe { Bytes::arc_from_arc_bytes(ManuallyDrop::take(&mut b.bytes)) })
+    fn as_ref(&self) -> &(DropFn, V) {
+        match self {
+            VTableRef::Ref(v) => v,
+            VTableRef::Owned(v) => &*v,
+        }
     }
 }
 
 /// A generic value reference into a buffer.
 #[derive(Clone)]
-pub struct DynValueRef<'a, V> {
+pub struct ValueRef<'a, V> {
     pub(crate) bytes: &'a [u8],
     pub(crate) type_id: TypeId,
-    pub(crate) vtable: Arc<(DropFn, V)>,
+    pub(crate) vtable: VTableRef<'a, V>,
 }
 
-impl<'a, V: HasDebug> fmt::Debug for DynValueRef<'a, V> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl<'a, V: HasHash> Hash for ValueRef<'a, V> {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
         unsafe {
-            self.vtable.1.fmt_fn()(self.bytes, f)
+            self.vtable.as_ref().hash_fn()(self.bytes.get_bytes_ref(), state);
         }
     }
 }
 
-impl<'a, V> DynValueRef<'a, V> {
+impl<'a, V: HasDebug> fmt::Debug for ValueRef<'a, V> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        unsafe { self.vtable.as_ref().fmt_fn()(self.bytes.get_bytes_ref(), f) }
+    }
+}
+
+impl<'a, V: HasPartialEq> PartialEq for ValueRef<'a, V> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        unsafe {
+            self.vtable.as_ref().eq_fn()(self.bytes.get_bytes_ref(), other.bytes.get_bytes_ref())
+        }
+    }
+}
+
+impl<'a, V: HasEq> Eq for ValueRef<'a, V> {}
+
+impl<'a, V> ValueRef<'a, V> {
     impl_value_base!();
-    
+
     /// Create a new `ValueRef` from a typed reference.
     #[inline]
-    pub fn new<T: Any + DropBytes + Dyn<VTable = V>>(typed: &'a T) -> DynValueRef<'a, V> {
-        DynValueRef {
+    pub fn new<T: Any + DropBytes>(typed: &'a T) -> ValueRef<'a, V>
+    where
+        V: VTable<T>,
+    {
+        // Reminder: We need DropFn here in case the referenced value is cloned.
+        ValueRef {
             bytes: typed.as_bytes(),
             type_id: TypeId::of::<T>(),
-            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
+            vtable: VTableRef::Owned(Box::new((DropFn(T::drop_bytes), V::build_vtable()))),
         }
     }
 
@@ -310,49 +446,88 @@ impl<'a, V> DynValueRef<'a, V> {
     ///
     /// The given bytes must be the correct representation of the type given `TypeId`.
     #[inline]
-    pub(crate) unsafe fn from_raw_parts(bytes: &'a [u8], type_id: TypeId, vtable: Arc<(DropFn, V)>) -> DynValueRef<'a, V> {
-        DynValueRef { bytes, type_id, vtable }
+    pub(crate) unsafe fn from_raw_parts(
+        bytes: &'a [u8],
+        type_id: TypeId,
+        vtable: &'a (DropFn, V),
+    ) -> ValueRef<'a, V> {
+        ValueRef {
+            bytes,
+            type_id,
+            vtable: VTableRef::Ref(vtable),
+        }
+    }
+
+    /// Clone the referenced value.
+    ///
+    /// Unlike the `Clone` trait, this function will produce an owned clone of the value pointed to
+    /// by this value reference.
+    #[inline]
+    pub fn clone_value(&self) -> Value<Box<[u8]>, V>
+    where
+        V: HasClone + Clone,
+    {
+        Value {
+            bytes: ManuallyDrop::new(unsafe {
+                self.vtable.as_ref().clone_fn()(self.bytes.get_bytes_ref())
+            }),
+            type_id: self.type_id,
+            vtable: Arc::from(self.vtable.as_ref().clone()),
+        }
     }
 
     /// Downcast this value reference into a borrowed `T` type. Return `None` if the downcast fails.
     #[inline]
-    pub fn downcast<T: Bytes + 'static>(self) -> Option<&'a T> {
+    pub fn downcast<T: 'static>(self) -> Option<&'a T> {
         // This is safe since we check that self.bytes represent a `T`.
         self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes(b.bytes) })
     }
 }
 
 /// A generic mutable value reference into a buffer.
-pub struct DynValueMut<'a, V> {
+pub struct ValueMut<'a, V> {
     pub(crate) bytes: &'a mut [u8],
     pub(crate) type_id: TypeId,
-    pub(crate) vtable: Arc<(DropFn, V)>,
+    pub(crate) vtable: VTableRef<'a, V>,
 }
 
-impl<'a, V: HasDebug> fmt::Debug for DynValueMut<'a, V> {
+impl<'a, V: HasDebug> fmt::Debug for ValueMut<'a, V> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        unsafe { self.vtable.as_ref().fmt_fn()(self.bytes, f) }
+    }
+}
+
+impl<'a, V: HasPartialEq> PartialEq for ValueMut<'a, V> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
         unsafe {
-            self.vtable.1.fmt_fn()(self.bytes, f)
+            self.vtable.as_ref().eq_fn()(self.bytes.get_bytes_ref(), other.bytes.get_bytes_ref())
         }
     }
 }
 
-impl<'a, V> DynValueMut<'a, V> {
+impl<'a, V: HasEq> Eq for ValueMut<'a, V> {}
+
+impl<'a, V> ValueMut<'a, V> {
     impl_value_base!();
-    
+
     /// Create a new `ValueRef` from a typed reference.
     #[inline]
-    pub fn new<T: Any + DropBytes + Dyn<VTable = V>>(typed: &'a mut T) -> DynValueMut<'a, V> {
-        DynValueMut {
+    pub fn new<T: Any>(typed: &'a mut T) -> ValueMut<'a, V>
+    where
+        V: VTable<T>,
+    {
+        ValueMut {
             bytes: typed.as_bytes_mut(),
             type_id: TypeId::of::<T>(),
-            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
+            vtable: VTableRef::Owned(Box::new((DropFn(T::drop_bytes), V::build_vtable()))),
         }
     }
 
     /// Swap the values between `other` and `self`.
     #[inline]
-    pub fn swap<'b>(&mut self, other: &mut DynValueMut<'b, V>) {
+    pub fn swap<'b>(&mut self, other: &mut ValueMut<'b, V>) {
         if self.value_type_id() == other.value_type_id() {
             self.bytes.swap_with_slice(other.bytes);
         }
@@ -362,8 +537,9 @@ impl<'a, V> DynValueMut<'a, V> {
     ///
     /// This function will call `drop` on any values stored in `self`.
     #[inline]
-    pub fn clone_from<'b>(&mut self, other: impl Into<DynValueRef<'b, V>>)
-        where V: HasClone
+    pub fn clone_from<'b>(&mut self, other: impl Into<ValueRef<'b, V>>)
+    where
+        V: HasClone + 'b,
     {
         let other = other.into();
         if self.value_type_id() == other.value_type_id() {
@@ -372,7 +548,7 @@ impl<'a, V> DynValueMut<'a, V> {
                 // This function will call the appropriate typed clone_from function, which will
                 // automatically drop the previous value of self.bytes, so no manual drop call is
                 // needed here.
-                self.vtable.1.clone_from_fn()(&mut self.bytes, other.bytes);
+                self.vtable.as_ref().clone_from_fn()(&mut self.bytes, other.bytes);
             }
         }
     }
@@ -383,13 +559,21 @@ impl<'a, V> DynValueMut<'a, V> {
     ///
     /// The given bytes must be the correct representation of the type given `TypeId`.
     #[inline]
-    pub(crate) unsafe fn from_raw_parts(bytes: &'a mut [u8], type_id: TypeId, vtable: Arc<(DropFn, V)>) -> DynValueMut<'a, V> {
-        DynValueMut { bytes, type_id, vtable }
+    pub(crate) unsafe fn from_raw_parts(
+        bytes: &'a mut [u8],
+        type_id: TypeId,
+        vtable: &'a (DropFn, V),
+    ) -> ValueMut<'a, V> {
+        ValueMut {
+            bytes,
+            type_id,
+            vtable: VTableRef::Ref(vtable),
+        }
     }
 
     /// Downcast this value reference into a borrowed `T` type. Return `None` if the downcast fails.
     #[inline]
-    pub fn downcast<T: Bytes + 'static>(self) -> Option<&'a mut T> {
+    pub fn downcast<T: 'static>(self) -> Option<&'a mut T> {
         // This is safe since we check that self.bytes represent a `T`.
         self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes_mut(b.bytes) })
     }
@@ -495,10 +679,10 @@ impl<'a> CopyValueMut<'a> {
  * Valid conversions.
  */
 
-impl<'a, V> From<DynValueMut<'a, V>> for DynValueRef<'a, V> {
+impl<'a, V> From<ValueMut<'a, V>> for ValueRef<'a, V> {
     #[inline]
-    fn from(v: DynValueMut<'a, V>) -> DynValueRef<'a, V> {
-        DynValueRef {
+    fn from(v: ValueMut<'a, V>) -> ValueRef<'a, V> {
+        ValueRef {
             bytes: v.bytes,
             type_id: v.type_id,
             vtable: v.vtable,

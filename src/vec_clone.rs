@@ -7,8 +7,8 @@ use std::{
 
 use crate::bytes::*;
 use crate::clone_value::*;
-use crate::VecCopy;
 use crate::traits::*;
+use crate::VecCopy;
 
 pub trait Elem: Any + Bytes + CloneBytes + DropBytes {}
 impl<T> Elem for T where T: Any + Bytes + CloneBytes + DropBytes {}
@@ -82,7 +82,7 @@ impl VecClone {
         VecClone {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
-            data: ManuallyDrop::new( unsafe { VecCopy::with_capacity_non_copy::<T>(n) }),
+            data: ManuallyDrop::new(unsafe { VecCopy::with_capacity_non_copy::<T>(n) }),
             clone_fn: CloneFn(T::clone_bytes),
             clone_from_fn: CloneFromFn(T::clone_from_bytes),
             drop_fn: DropFn(T::drop_bytes),
@@ -308,7 +308,7 @@ impl VecClone {
     pub fn into_vec<T: Elem>(self) -> Option<Vec<T>> {
         // This is safe because self.data will not be used after this call, and the resulting
         // Vec<T> will drop all elements correctly.
-        unsafe { 
+        unsafe {
             // Inhibit the Drop for self.
             let mut no_drop = ManuallyDrop::new(self);
             // Extract the value from data and turn it into a `Vec` which will handle the drop
@@ -509,8 +509,8 @@ impl From<VecCopy> for VecClone {
         // default empty implementations for clone and drop.
         VecClone {
             data: ManuallyDrop::new(data),
-            clone_fn: CloneFn(|v: &[u8]| { v.to_vec().into_boxed_slice() }),
-            clone_from_fn: CloneFromFn(|_,_| {}),
+            clone_fn: CloneFn(|v: &[u8]| v.to_vec().into_boxed_slice()),
+            clone_from_fn: CloneFromFn(|_, _| {}),
             drop_fn: DropFn(|_| {}),
         }
     }
@@ -627,7 +627,10 @@ mod tests {
         let nu_vec: Vec<Rc<u8>> = buf.clone_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
-        let vec: Vec<Rc<u8>> = vec![1u8, 3, 4, 1, 2, 52, 1, 3, 41, 23, 2].into_iter().map(Rc::new).collect();
+        let vec: Vec<Rc<u8>> = vec![1u8, 3, 4, 1, 2, 52, 1, 3, 41, 23, 2]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
         let buf = VecClone::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<u8>> = buf.clone_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
@@ -635,12 +638,18 @@ mod tests {
 
     #[test]
     fn data_integrity_i16_test() {
-        let vec: Vec<Rc<i16>> = vec![1i16, -3, 1002, -231, 32].into_iter().map(Rc::new).collect();
+        let vec: Vec<Rc<i16>> = vec![1i16, -3, 1002, -231, 32]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
         let buf = VecClone::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<i16>> = buf.clone_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
-        let vec: Vec<Rc<i16>> = vec![1i16, -3, 1002, -231, 32, 42, -123, 4].into_iter().map(Rc::new).collect();
+        let vec: Vec<Rc<i16>> = vec![1i16, -3, 1002, -231, 32, 42, -123, 4]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
         let buf = VecClone::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<i16>> = buf.clone_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
@@ -648,12 +657,18 @@ mod tests {
 
     #[test]
     fn data_integrity_i32_test() {
-        let vec: Vec<Rc<i32>> = vec![1i32, -3, 1002, -231, 32].into_iter().map(Rc::new).collect();
+        let vec: Vec<Rc<i32>> = vec![1i32, -3, 1002, -231, 32]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
         let buf = VecClone::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<i32>> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
-        let vec: Vec<Rc<i32>> = vec![1i32, -3, 1002, -231, 32, 42, -123].into_iter().map(Rc::new).collect();
+        let vec: Vec<Rc<i32>> = vec![1i32, -3, 1002, -231, 32, 42, -123]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
         let buf = VecClone::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<i32>> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
@@ -661,12 +676,18 @@ mod tests {
 
     #[test]
     fn data_integrity_f32_test() {
-        let vec: Vec<Rc<f32>> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43].into_iter().map(Rc::new).collect();
+        let vec: Vec<Rc<f32>> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
         let buf = VecClone::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<f32>> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
-        let vec: Vec<Rc<f32>> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43, 2e-1].into_iter().map(Rc::new).collect();
+        let vec: Vec<Rc<f32>> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43, 2e-1]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
         let buf = VecClone::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<f32>> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
@@ -674,12 +695,18 @@ mod tests {
 
     #[test]
     fn data_integrity_f64_test() {
-        let vec: Vec<Rc<f64>> = vec![1f64, -3.0, 10.02, -23.1, 32e-1].into_iter().map(Rc::new).collect();
+        let vec: Vec<Rc<f64>> = vec![1f64, -3.0, 10.02, -23.1, 32e-1]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
         let buf = VecClone::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<f64>> = buf.clone_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
-        let vec: Vec<Rc<f64>> = vec![1f64, -3.1, 100.2, -2.31, 3.2, 4e2, -1e23].into_iter().map(Rc::new).collect();
+        let vec: Vec<Rc<f64>> = vec![1f64, -3.1, 100.2, -2.31, 3.2, 4e2, -1e23]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
         let buf = VecClone::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<f64>> = buf.clone_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
@@ -739,11 +766,23 @@ mod tests {
             String::from("bye"),
             String::from("supercalifragilisticexpialidocious"),
             String::from("42"),
-        ].into_iter().map(Rc::new).collect();
+        ]
+        .into_iter()
+        .map(Rc::new)
+        .collect();
         let buf = VecClone::from(vec.clone()); // Convert into buffer
-        assert_eq!(&Rc::new("hi".to_string()), buf.get_ref::<Rc<String>>(0).unwrap());
-        assert_eq!(&Rc::new("hello".to_string()), buf.get_ref::<Rc<String>>(1).unwrap());
-        assert_eq!(&Rc::new("goodbye".to_string()), buf.get_ref::<Rc<String>>(2).unwrap());
+        assert_eq!(
+            &Rc::new("hi".to_string()),
+            buf.get_ref::<Rc<String>>(0).unwrap()
+        );
+        assert_eq!(
+            &Rc::new("hello".to_string()),
+            buf.get_ref::<Rc<String>>(1).unwrap()
+        );
+        assert_eq!(
+            &Rc::new("goodbye".to_string()),
+            buf.get_ref::<Rc<String>>(2).unwrap()
+        );
         let nu_vec: Vec<Rc<String>> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
@@ -751,14 +790,20 @@ mod tests {
     #[test]
     fn iter_test() {
         // Check iterating over data with a larger size than 8 bits.
-        let vec_f32: Vec<Rc<f32>> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43].into_iter().map(Rc::new).collect();
+        let vec_f32: Vec<Rc<f32>> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
         let buf = VecClone::from(vec_f32.clone()); // Convert into buffer
         for (i, val) in buf.iter::<Rc<f32>>().unwrap().enumerate() {
             assert_eq!(val, &vec_f32[i]);
         }
 
         // Check iterating over data with the same size.
-        let vec_u8: Vec<Rc<u8>> = vec![1u8, 3, 4, 1, 2, 4, 128, 32].into_iter().map(Rc::new).collect();
+        let vec_u8: Vec<Rc<u8>> = vec![1u8, 3, 4, 1, 2, 4, 128, 32]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
         let buf = VecClone::from(vec_u8.clone()); // Convert into buffer
         for (i, val) in buf.iter::<Rc<u8>>().unwrap().enumerate() {
             assert_eq!(val, &vec_u8[i]);
@@ -779,7 +824,10 @@ mod tests {
     /// wrong type data.
     #[test]
     fn wrong_type_test() {
-        let vec: Vec<Rc<f32>> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43].into_iter().map(Rc::new).collect();
+        let vec: Vec<Rc<f32>> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
         let mut buf = VecClone::from(vec.clone()); // Convert into buffer
         assert_eq!(vec, buf.clone_into_vec::<Rc<f32>>().unwrap());
 
@@ -794,7 +842,8 @@ mod tests {
     /// Test pushing values and bytes to a buffer.
     #[test]
     fn push_test() {
-        let mut vec_f32: Vec<Rc<f32>> = vec![1.0_f32, 23.0, 0.01].into_iter().map(Rc::new).collect();
+        let mut vec_f32: Vec<Rc<f32>> =
+            vec![1.0_f32, 23.0, 0.01].into_iter().map(Rc::new).collect();
         let mut buf = VecClone::from(vec_f32.clone()); // Convert into buffer
         for (i, val) in buf.iter::<Rc<f32>>().unwrap().enumerate() {
             assert_eq!(val, &vec_f32[i]);
@@ -820,7 +869,10 @@ mod tests {
     fn append_test() {
         let mut buf = VecClone::with_type::<Rc<f32>>(); // Create an empty buffer.
 
-        let data: Vec<Rc<f32>> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43].into_iter().map(Rc::new).collect();
+        let data: Vec<Rc<f32>> = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
         // Append an ordianry vector of data.
         let mut other_buf = VecClone::from_vec(data.clone());
         buf.append(&mut other_buf);

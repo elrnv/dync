@@ -3,9 +3,16 @@ use std::any::Any;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::prelude::*;
 
-use data_buffer::{VecClone, VecCopy, VecDyn, Dyn, HasClone};
+#[cfg(feature = "testing")]
+use data_buffer::vec_clone::VecClone;
+use data_buffer::{VecCopy, VecDyn};
+use dyn_derive::dyn_trait;
 
 static SEED: [u8; 32] = [3; 32];
+
+#[dyn_trait(suffix = "VTable", dyn_crate_name = "data_buffer")]
+pub trait DynClone {}
+impl DynClone for [i64; 3] {}
 
 #[inline]
 fn make_random_vec(n: usize) -> Vec<[i64; 3]> {
@@ -31,6 +38,7 @@ fn make_random_vec_copy(n: usize) -> VecCopy {
     vec.into()
 }
 
+#[cfg(feature = "testing")]
 #[inline]
 fn make_random_vec_clone(n: usize) -> VecClone {
     let mut rng: StdRng = SeedableRng::from_seed(SEED);
@@ -39,7 +47,7 @@ fn make_random_vec_clone(n: usize) -> VecClone {
 }
 
 #[inline]
-fn make_random_vec_dyn(n: usize) -> VecDyn<<[i64; 3] as Dyn>::VTable> {
+fn make_random_vec_dyn(n: usize) -> VecDyn<DynCloneVTable> {
     let mut rng: StdRng = SeedableRng::from_seed(SEED);
     let vec: Vec<_> = (0..n).map(move |_| [rng.gen::<i64>(); 3]).collect();
     vec.into()
@@ -86,6 +94,7 @@ fn vec_copy_compute(v: &mut VecCopy) {
     }
 }
 
+#[cfg(feature = "testing")]
 #[inline]
 fn vec_clone_compute(v: &mut VecClone) {
     for a in v.iter_value_mut() {
@@ -98,8 +107,8 @@ fn vec_clone_compute(v: &mut VecClone) {
 }
 
 #[inline]
-fn vec_dyn_compute<V: HasClone>(v: &mut VecDyn<V>) {
-    for a in v.iter_value_mut() {
+fn vec_dyn_compute<V>(v: &mut VecDyn<V>) {
+    for a in v.iter_mut() {
         let a = a.downcast::<[i64; 3]>().unwrap();
         let res = compute(a[0], a[1], a[2]);
         a[0] = res[0];
@@ -133,6 +142,7 @@ fn type_erasure(c: &mut Criterion) {
             })
         });
 
+        #[cfg(feature = "testing")]
         group.bench_function(BenchmarkId::new("VecClone", buf_size), |b| {
             let mut v = make_random_vec_clone(buf_size);
             b.iter(|| {

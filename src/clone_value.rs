@@ -6,13 +6,13 @@
 #![allow(dead_code)]
 
 use std::any::TypeId;
+use std::mem::ManuallyDrop;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::mem::ManuallyDrop;
 
-use crate::vec_clone::Elem as CloneElem;
-use crate::traits::*;
 use crate::bytes::*;
+use crate::traits::*;
+use crate::vec_clone::Elem as CloneElem;
 
 #[derive(Debug)]
 pub struct BoxValue {
@@ -69,7 +69,9 @@ impl BoxValue {
     #[inline]
     pub fn downcast<T: CloneElem>(self) -> Option<Box<T>> {
         // This is safe since we check that self.bytes represent a `T`.
-        self.downcast_with::<T, _, _>(|mut b| unsafe { Bytes::box_from_box_bytes(ManuallyDrop::take(&mut b.bytes)) })
+        self.downcast_with::<T, _, _>(|mut b| unsafe {
+            Bytes::box_from_box_bytes(ManuallyDrop::take(&mut b.bytes))
+        })
     }
 }
 
@@ -121,7 +123,9 @@ impl RcValue {
     #[inline]
     pub fn downcast<T: Bytes>(self) -> Option<Rc<T>> {
         // This is safe since we check that self.bytes represent a `T`.
-        self.downcast_with::<T, _, _>(|mut b| unsafe { Bytes::rc_from_rc_bytes(ManuallyDrop::take(&mut b.bytes)) })
+        self.downcast_with::<T, _, _>(|mut b| unsafe {
+            Bytes::rc_from_rc_bytes(ManuallyDrop::take(&mut b.bytes))
+        })
     }
 }
 
@@ -178,7 +182,9 @@ impl ArcValue {
     #[inline]
     pub fn downcast<T: Bytes>(self) -> Option<Arc<T>> {
         // This is safe since we check that self.bytes represent a `T`.
-        self.downcast_with::<T, _, _>(|mut b| unsafe { Bytes::arc_from_arc_bytes(ManuallyDrop::take(&mut b.bytes)) })
+        self.downcast_with::<T, _, _>(|mut b| unsafe {
+            Bytes::arc_from_arc_bytes(ManuallyDrop::take(&mut b.bytes))
+        })
     }
 }
 
@@ -198,7 +204,7 @@ pub struct CloneValueRef<'a> {
 
 impl<'a> CloneValueRef<'a> {
     impl_value_base!();
-    
+
     /// Create a new `CloneValueRef` from a typed reference.
     #[inline]
     pub fn new<T: CloneElem>(typed: &'a T) -> CloneValueRef<'a> {

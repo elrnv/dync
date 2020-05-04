@@ -1,19 +1,18 @@
 #![allow(dead_code)]
 use std::{
     any::{Any, TypeId},
+    fmt,
     mem::ManuallyDrop,
     slice,
     sync::Arc,
-    fmt,
 };
 
-use crate::bytes::*;
-use crate::value::*;
 use crate::traits::*;
+use crate::value::*;
 use crate::VecCopy;
 
-pub trait Elem: Any + Bytes + DropBytes {}
-impl<T> Elem for T where T: Any + Bytes + DropBytes {}
+pub trait Elem: Any + DropBytes {}
+impl<T> Elem for T where T: Any + DropBytes {}
 
 /// This container is a WIP, not to be used in production.
 #[derive(Hash)]
@@ -22,9 +21,13 @@ pub struct VecDyn<V> {
     vtable: Arc<(DropFn, V)>,
 }
 
-impl<V: HasDebug> fmt::Debug for VecDyn<V> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_list().entries(self.iter_value_ref()).finish()
+impl<V> Drop for VecDyn<V> {
+    fn drop(&mut self) {
+        unsafe {
+            for elem_bytes in self.data.byte_chunks_mut() {
+                self.vtable.drop_fn().0(elem_bytes);
+            }
+        }
     }
 }
 
@@ -45,25 +48,37 @@ impl<V: HasClone> Clone for VecDyn<V> {
     }
 }
 
-impl<V> Drop for VecDyn<V> {
-    fn drop(&mut self) {
-        unsafe {
-            for elem_bytes in self.data.byte_chunks_mut() {
-                self.vtable.drop_fn().0(elem_bytes);
-            }
-        }
+impl<V: HasPartialEq> PartialEq for VecDyn<V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.iter()
+            .zip(other.iter())
+            .all(|(this, that)| this == that)
+    }
+}
+
+impl<V: HasDebug> fmt::Debug for VecDyn<V> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
     }
 }
 
 impl<V> VecDyn<V> {
+    /// Retrieve the associated virtual function table.
+    pub fn vtable(&self) -> &V {
+        &self.vtable.1
+    }
+
     /// Construct an empty vector with a specific pointed-to element type.
     #[inline]
-    pub fn with_type<T: Elem + Dyn<VTable = V>>() -> Self {
+    pub fn with_type<T: Elem>() -> Self
+    where
+        V: VTable<T>,
+    {
         VecDyn {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::with_type_non_copy::<T>() }),
-            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
+            vtable: Arc::new((DropFn(T::drop_bytes), V::build_vtable())),
         }
     }
 
@@ -78,23 +93,29 @@ impl<V> VecDyn<V> {
 
     /// Construct an empty vector with a capacity for a given number of typed pointed-to elements.
     #[inline]
-    pub fn with_capacity<T: Elem + Dyn<VTable = V>>(n: usize) -> Self {
+    pub fn with_capacity<T: Elem>(n: usize) -> Self
+    where
+        V: VTable<T>,
+    {
         VecDyn {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
-            data: ManuallyDrop::new( unsafe { VecCopy::with_capacity_non_copy::<T>(n) }),
-            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
+            data: ManuallyDrop::new(unsafe { VecCopy::with_capacity_non_copy::<T>(n) }),
+            vtable: Arc::new((DropFn(T::drop_bytes), V::build_vtable())),
         }
     }
 
     /// Construct a `VecDyn` from a given `Vec` reusing the space already allocated by the given
     /// vector.
-    pub fn from_vec<T: Elem + Dyn<VTable = V>>(vec: Vec<T>) -> Self {
+    pub fn from_vec<T: Elem>(vec: Vec<T>) -> Self
+    where
+        V: VTable<T>,
+    {
         VecDyn {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_vec_non_copy(vec) }),
-            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
+            vtable: Arc::new((DropFn(T::drop_bytes), V::build_vtable())),
         }
     }
 
@@ -191,7 +212,7 @@ impl<V> VecDyn<V> {
     ///
     /// Returns `None` if the given type `T` doesn't match the internal.
     #[inline]
-    pub fn iter<'a, T: Elem>(&'a self) -> Option<slice::Iter<T>> {
+    pub fn iter_as<'a, T: Elem>(&'a self) -> Option<slice::Iter<T>> {
         self.data.iter::<T>()
     }
 
@@ -199,7 +220,7 @@ impl<V> VecDyn<V> {
     ///
     /// Returns `None` if the given type `T` doesn't match the internal.
     #[inline]
-    pub fn iter_mut<'a, T: Elem>(&'a mut self) -> Option<slice::IterMut<T>> {
+    pub fn iter_mut_as<'a, T: Elem>(&'a mut self) -> Option<slice::IterMut<T>> {
         self.data.iter_mut::<T>()
     }
 
@@ -210,7 +231,7 @@ impl<V> VecDyn<V> {
     pub fn into_vec<T: Elem>(self) -> Option<Vec<T>> {
         // This is safe because self.data will not be used after this call, and the resulting
         // Vec<T> will drop all elements correctly.
-        unsafe { 
+        unsafe {
             // Inhibit the Drop for self.
             let mut no_drop = ManuallyDrop::new(self);
             // Extract the value from data and turn it into a `Vec` which will handle the drop
@@ -235,13 +256,13 @@ impl<V> VecDyn<V> {
 
     /// Get a `const` reference to the `i`'th element of the buffer.
     #[inline]
-    pub fn get_ref<T: Elem>(&self, i: usize) -> Option<&T> {
+    pub fn get_ref_as<T: Elem>(&self, i: usize) -> Option<&T> {
         self.data.get_ref::<T>(i)
     }
 
     /// Get a mutable reference to the `i`'th element of the buffer.
     #[inline]
-    pub fn get_mut<T: Elem>(&mut self, i: usize) -> Option<&mut T> {
+    pub fn get_mut_as<T: Elem>(&mut self, i: usize) -> Option<&mut T> {
         self.data.get_mut::<T>(i)
     }
 
@@ -284,11 +305,13 @@ impl<V> VecDyn<V> {
 
     /// Get a reference to a value stored in this container at index `i`.
     #[inline]
-    pub fn value_ref(&self, i: usize) -> DynValueRef<V> {
+    pub fn get(&self, i: usize) -> ValueRef<V> {
         debug_assert!(i < self.len());
         // This call is safe since our buffer guarantees that the given bytes have the
         // corresponding TypeId.
-        unsafe { DynValueRef::from_raw_parts(self.data.get_bytes(i), self.element_type_id(), Arc::clone(&self.vtable)) }
+        unsafe {
+            ValueRef::from_raw_parts(self.data.get_bytes(i), self.element_type_id(), &self.vtable)
+        }
     }
 
     /// Return an iterator over untyped value references stored in this buffer.
@@ -297,15 +320,48 @@ impl<V> VecDyn<V> {
     /// As a result, this type of iteration is typically less efficient if a typed value is
     /// needed for each element.
     #[inline]
-    pub fn iter_value_ref<'a>(&'a self) -> impl Iterator<Item = DynValueRef<'a, V>> + 'a {
-        let &Self { ref data, ref vtable } = self;
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item = ValueRef<'a, V>> + 'a {
+        let &Self {
+            ref data,
+            ref vtable,
+        } = self;
         let VecCopy {
             data,
             element_size,
             element_type_id,
         } = &**data;
         data.chunks_exact(*element_size)
-            .map(move |bytes| unsafe { DynValueRef::from_raw_parts(bytes, *element_type_id, Arc::clone(vtable)) })
+            .map(move |bytes| unsafe { ValueRef::from_raw_parts(bytes, *element_type_id, vtable) })
+    }
+
+    /// Get a mutable reference to a value stored in this container at index `i`.
+    #[inline]
+    pub fn get_mut<'a>(&'a mut self, i: usize) -> ValueMut<'a, V> {
+        debug_assert!(i < self.len());
+        let Self { data, vtable } = self;
+        let type_id = data.element_type_id();
+        // Safety is guaranteed here by the value API.
+        unsafe { ValueMut::from_raw_parts(data.get_bytes_mut(i), type_id, vtable) }
+    }
+
+    /// Return an iterator over mutable untyped value references stored in this buffer.
+    ///
+    /// In contrast to `iter_mut`, this function defers downcasting on a per element basis.  As a
+    /// result, this type of iteration is typically less efficient if a typed value is needed
+    /// for each element.
+    #[inline]
+    pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = ValueMut<'a, V>> + 'a {
+        let &mut Self {
+            ref mut data,
+            ref vtable,
+        } = self;
+        let VecCopy {
+            data,
+            element_size,
+            element_type_id,
+        } = &mut **data;
+        data.chunks_exact_mut(*element_size)
+            .map(move |bytes| unsafe { ValueMut::from_raw_parts(bytes, *element_type_id, vtable) })
     }
 }
 
@@ -314,23 +370,29 @@ impl<V: HasClone> VecDyn<V> {
     /// Construct a typed `DataBuffer` with a given size and filled with the specified default
     /// value.
     #[inline]
-    pub fn with_size<T: Elem + Clone + Dyn<VTable = V>>(n: usize, def: T) -> Self {
+    pub fn with_size<T: Elem + Clone>(n: usize, def: T) -> Self
+    where
+        V: VTable<T>,
+    {
         VecDyn {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_vec_non_copy(vec![def; n]) }),
-            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
+            vtable: Arc::new((DropFn(T::drop_bytes), V::build_vtable())),
         }
     }
 
     /// Construct a buffer from a given slice by cloning the data.
     #[inline]
-    pub fn from_slice<T: Elem + Clone + Dyn<VTable = V>>(slice: &[T]) -> Self {
+    pub fn from_slice<T: Elem + Clone>(slice: &[T]) -> Self
+    where
+        V: VTable<T>,
+    {
         VecDyn {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_slice_non_copy::<T>(slice) }),
-            vtable: Arc::new((DropFn(T::drop_bytes), T::build_vtable()))
+            vtable: Arc::new((DropFn(T::drop_bytes), V::build_vtable())),
         }
     }
 
@@ -372,7 +434,7 @@ impl<V: HasClone> VecDyn<V> {
     /// returned.
     #[inline]
     pub fn fill<T: Elem + Clone>(&mut self, def: T) -> Option<&mut Self> {
-        for v in self.iter_mut::<T>()? {
+        for v in self.iter_mut_as::<T>()? {
             *v = def.clone();
         }
         Some(self)
@@ -383,7 +445,10 @@ impl<V: HasClone> VecDyn<V> {
     /// Return the mutable reference `Some(vec)` if type matched the internal type and
     /// `None` otherwise.
     #[inline]
-    pub fn append_cloned_to_vec<'a, T: Elem + Clone>(&self, vec: &'a mut Vec<T>) -> Option<&'a mut Vec<T>> {
+    pub fn append_cloned_to_vec<'a, T: Elem + Clone>(
+        &self,
+        vec: &'a mut Vec<T>,
+    ) -> Option<&'a mut Vec<T>> {
         let slice = self.as_slice()?;
         // Only allocate once we have confirmed that the given `T` matches to avoid unnecessary
         // overhead.
@@ -401,66 +466,30 @@ impl<V: HasClone> VecDyn<V> {
             None => None,
         }
     }
-
-    /// Get a mutable reference to a value stored in this container at index `i`.
-    #[inline]
-    pub fn value_mut(&mut self, i: usize) -> DynValueMut<'_, V> {
-        debug_assert!(i < self.len());
-        let Self {
-            data,
-            vtable,
-        } = self;
-        let type_id = data.element_type_id();
-        // Safety is guaranteed here by the value API.
-        unsafe {
-            DynValueMut::from_raw_parts(data.get_bytes_mut(i), type_id, Arc::clone(vtable))
-        }
-    }
-
-    /// Return an iterator over mutable untyped value references stored in this buffer.
-    ///
-    /// In contrast to `iter_mut`, this function defers downcasting on a per element basis.  As a
-    /// result, this type of iteration is typically less efficient if a typed value is needed
-    /// for each element.
-    #[inline]
-    pub fn iter_value_mut<'a>(&'a mut self) -> impl Iterator<Item = DynValueMut<'a, V>> + 'a {
-        let &mut Self {
-            ref mut data,
-            ref mut vtable,
-        } = self;
-        let VecCopy {
-            data,
-            element_size,
-            element_type_id,
-        } = &mut **data;
-        data.chunks_exact_mut(*element_size)
-            .map(move |bytes| unsafe {
-                DynValueMut::from_raw_parts(bytes, *element_type_id, Arc::clone(vtable))
-            })
-    }
 }
 
 /// Convert a `Vec` to a buffer.
-impl<T: Elem + Dyn> From<Vec<T>> for VecDyn<T::VTable> {
+impl<T: Elem, V: VTable<T>> From<Vec<T>> for VecDyn<V> {
     #[inline]
-    fn from(vec: Vec<T>) -> VecDyn<T::VTable> {
+    fn from(vec: Vec<T>) -> VecDyn<V> {
         VecDyn::from_vec(vec)
     }
 }
 
 /// Convert a slice to a `VecDyn`.
-impl<'a, T> From<&'a [T]> for VecDyn<T::VTable>
-where T: Elem + Clone + Dyn,
-      T::VTable: HasClone,
+impl<'a, T, V> From<&'a [T]> for VecDyn<V>
+where
+    T: Elem + Clone,
+    V: VTable<T> + HasClone,
 {
     #[inline]
-    fn from(slice: &'a [T]) -> VecDyn<T::VTable> {
+    fn from(slice: &'a [T]) -> VecDyn<V> {
         VecDyn::from_slice(slice)
     }
 }
 
 /// Convert a buffer to a `Vec` with an option to fail.
-impl<T: Elem, V> Into<Option<Vec<T>>> for VecDyn<V> {
+impl<T: Elem, V: VTable<T>> Into<Option<Vec<T>>> for VecDyn<V> {
     #[inline]
     fn into(self) -> Option<Vec<T>> {
         self.into_vec()
@@ -470,58 +499,88 @@ impl<T: Elem, V> Into<Option<Vec<T>>> for VecDyn<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dyn_derive::dyn_trait;
+    use rand::prelude::*;
     use std::mem::size_of;
     use std::rc::Rc;
-    use dyn_derive::dyn_trait;
 
     #[dyn_trait(suffix = "VTable", dyn_crate_name = "crate")]
-    pub trait AllTrait: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug { }
-    impl<T> AllTrait for T where T: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug { }
+    pub trait AllTrait: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug {}
+    impl<T> AllTrait for T where T: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug {}
 
-    #[test]
-    fn clone_from_test() {
-        //use std::collections::HashSet;
-        //use std::rc::Rc;
+    type VecDynAll = VecDyn<AllTraitVTable>;
 
-        //// Let's create a collection of `Rc`s.
-        //let vec_rc: Vec<_> = vec![1, 23, 2, 42, 23, 1, 135346534653]
-        //    .into_iter()
-        //    .map(Rc::new)
-        //    .collect();
-        //let buf = VecDyn::from(vec_rc.clone()); // Clone into VecDyn
+    #[inline]
+    fn compute(x: i64, y: i64, z: i64) -> [i64; 3] {
+        [x - 2 * y + z * 2, y - 2 * z + x * 2, z - 2 * x + y * 2]
+    }
 
-        //// Construct a hashset of unique values from the VecDyn.
-        //let mut hashset: HashSet<RcDynValue<AllTraitVTable>> = HashSet::new();
+    #[inline]
+    fn make_random_vec_dyn(n: usize) -> VecDynAll {
+        let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
+        let between = rand::distributions::Uniform::from(1i64..5);
+        let vec: Vec<_> = (0..n).map(move |_| [between.sample(&mut rng); 3]).collect();
+        vec.into()
+    }
 
-        //for rc in buf.iter_value_ref().take(4) {
-        //    assert!(hashset.insert(Rc::clone(rc).into()));
-        //}
-
-        //assert!(!hashset.insert(Rc::clone(&vec_rc[4]).into()));
-        //assert!(!hashset.insert(Rc::clone(&vec_rc[5]).into()));
-
-        //assert_eq!(hashset.len(), 4);
-        //assert!(hashset.contains(&Rc::new(1).into()));
-        //assert!(hashset.contains(&Rc::new(23).into()));
-        //assert!(hashset.contains(&Rc::new(2).into()));
-        //assert!(hashset.contains(&Rc::new(42).into()));
-        //assert!(!hashset.contains(&Rc::new(42.0).into()));
+    #[inline]
+    fn vec_dyn_compute<V>(v: &mut VecDyn<V>) {
+        for a in v.iter_mut() {
+            let a = a.downcast::<[i64; 3]>().unwrap();
+            let res = compute(a[0], a[1], a[2]);
+            a[0] = res[0];
+            a[1] = res[1];
+            a[2] = res[2];
+        }
     }
 
     #[test]
-    fn iter_value_ref() {
+    fn downcast_value_mut() {
+        let mut v: VecDynAll = make_random_vec_dyn(9_000);
+        vec_dyn_compute(&mut v);
+    }
+
+    #[test]
+    fn clone_from_test() {
+        use std::collections::HashSet;
         use std::rc::Rc;
-        let vec: Vec<_> = vec![1, 23, 2, 42, 11]
+
+        // Let's create a collection of `Rc`s.
+        let vec_rc: Vec<_> = vec![1, 23, 2, 42, 23, 1, 13534653]
             .into_iter()
             .map(Rc::new)
             .collect();
+        let buf = VecDynAll::from(vec_rc.clone()); // Clone into VecDyn
+
+        // Construct a hashset of unique values from the VecDyn.
+        let mut hashset: HashSet<BoxValue<AllTraitVTable>> = HashSet::new();
+
+        for rc_ref in buf.iter().take(4) {
+            assert!(hashset.insert(rc_ref.clone_value()));
+        }
+
+        assert!(!hashset.insert(Value::new(Rc::clone(&vec_rc[4]))));
+        assert!(!hashset.insert(Value::new(Rc::clone(&vec_rc[5]))));
+
+        assert_eq!(hashset.len(), 4);
+        assert!(hashset.contains(&Value::new(Rc::new(1))));
+        assert!(hashset.contains(&Value::new(Rc::new(23))));
+        assert!(hashset.contains(&Value::new(Rc::new(2))));
+        assert!(hashset.contains(&Value::new(Rc::new(42))));
+        assert!(!hashset.contains(&Value::new(Rc::new(13534653))));
+    }
+
+    #[test]
+    fn iter() {
+        use std::rc::Rc;
+        let vec: Vec<_> = vec![1, 23, 2, 42, 11].into_iter().map(Rc::new).collect();
         {
-            let buf = VecDyn::from(vec.clone()); // Convert into buffer
+            let buf = VecDynAll::from(vec.clone()); // Convert into buffer
             let orig = Rc::new(100);
             let mut rc = Rc::clone(&orig);
             assert_eq!(Rc::strong_count(&rc), 2);
-            for val in buf.iter_value_ref() {
-                DynValueMut::new(&mut rc).clone_from(val);
+            for val in buf.iter() {
+                ValueMut::new(&mut rc).clone_from(val);
             }
             assert_eq!(Rc::strong_count(&orig), 1);
             assert_eq!(Rc::strong_count(&rc), 3);
@@ -536,19 +595,19 @@ mod tests {
     #[test]
     fn initialization_test() {
         // Empty typed buffer.
-        let a = VecDyn::with_type::<Rc<u8>>();
+        let a = VecDynAll::with_type::<Rc<u8>>();
         assert_eq!(a.len(), 0);
         assert_eq!(a.element_type_id(), TypeId::of::<Rc<u8>>());
         assert_eq!(a.byte_capacity(), 0); // Ensure nothing is allocated.
 
         // Empty buffer typed by the given type id.
-        let b = VecDyn::with_type_from(&a);
+        let b = VecDynAll::with_type_from(&a);
         assert_eq!(b.len(), 0);
         assert_eq!(b.element_type_id(), TypeId::of::<Rc<u8>>());
         assert_eq!(a.byte_capacity(), 0); // Ensure nothing is allocated.
 
         // Empty typed buffer with a given capacity.
-        let a = VecDyn::with_capacity::<Rc<u8>>(4);
+        let a = VecDynAll::with_capacity::<Rc<u8>>(4);
         assert_eq!(a.len(), 0);
         assert_eq!(a.byte_capacity(), 4 * size_of::<Rc<u8>>());
         assert_eq!(a.element_type_id(), TypeId::of::<Rc<u8>>());
@@ -557,60 +616,77 @@ mod tests {
     /// Test resizing a buffer.
     #[test]
     fn resize() {
-        let mut a = VecDyn::with_type::<Rc<u8>>();
+        let mut a = VecDynAll::with_type::<Rc<u8>>();
 
         // Increase the size of a.
-        a.resize(3, Rc::new(1u8)).expect("Failed to resize VecDyn up by 3 elements");
+        a.resize(3, Rc::new(1u8))
+            .expect("Failed to resize VecDyn up by 3 elements");
 
         assert_eq!(a.len(), 3);
         for i in 0..3 {
-            assert_eq!(a.get_ref::<Rc<u8>>(i).unwrap(), &Rc::new(1));
+            assert_eq!(a.get_ref_as::<Rc<u8>>(i).unwrap(), &Rc::new(1));
         }
 
         // Truncate a.
-        a.resize(2, Rc::new(1u8)).expect("Failed to resize VecDyn down to 2 elements");
+        a.resize(2, Rc::new(1u8))
+            .expect("Failed to resize VecDyn down to 2 elements");
 
         assert_eq!(a.len(), 2);
         for i in 0..2 {
-            assert_eq!(a.get_ref::<Rc<u8>>(i).unwrap(), &Rc::new(1));
+            assert_eq!(a.get_ref_as::<Rc<u8>>(i).unwrap(), &Rc::new(1));
         }
     }
 
     #[test]
     fn data_integrity_u8_test() {
         let vec: Vec<Rc<u8>> = vec![1u8, 3, 4, 1, 2].into_iter().map(Rc::new).collect();
-        let buf = VecDyn::from(vec.clone()); // Convert into buffer
+        let buf = VecDynAll::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<u8>> = buf.clone_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
-        let vec: Vec<Rc<u8>> = vec![1u8, 3, 4, 1, 2, 52, 1, 3, 41, 23, 2].into_iter().map(Rc::new).collect();
-        let buf = VecDyn::from(vec.clone()); // Convert into buffer
+        let vec: Vec<Rc<u8>> = vec![1u8, 3, 4, 1, 2, 52, 1, 3, 41, 23, 2]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
+        let buf = VecDynAll::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<u8>> = buf.clone_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
 
     #[test]
     fn data_integrity_i16_test() {
-        let vec: Vec<Rc<i16>> = vec![1i16, -3, 1002, -231, 32].into_iter().map(Rc::new).collect();
-        let buf = VecDyn::from(vec.clone()); // Convert into buffer
+        let vec: Vec<Rc<i16>> = vec![1i16, -3, 1002, -231, 32]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
+        let buf = VecDynAll::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<i16>> = buf.clone_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
-        let vec: Vec<Rc<i16>> = vec![1i16, -3, 1002, -231, 32, 42, -123, 4].into_iter().map(Rc::new).collect();
-        let buf = VecDyn::from(vec.clone()); // Convert into buffer
+        let vec: Vec<Rc<i16>> = vec![1i16, -3, 1002, -231, 32, 42, -123, 4]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
+        let buf = VecDynAll::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<i16>> = buf.clone_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
 
     #[test]
     fn data_integrity_i32_test() {
-        let vec: Vec<Rc<i32>> = vec![1i32, -3, 1002, -231, 32].into_iter().map(Rc::new).collect();
-        let buf = VecDyn::from(vec.clone()); // Convert into buffer
+        let vec: Vec<Rc<i32>> = vec![1i32, -3, 1002, -231, 32]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
+        let buf = VecDynAll::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<i32>> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
-        let vec: Vec<Rc<i32>> = vec![1i32, -3, 1002, -231, 32, 42, -123].into_iter().map(Rc::new).collect();
-        let buf = VecDyn::from(vec.clone()); // Convert into buffer
+        let vec: Vec<Rc<i32>> = vec![1i32, -3, 1002, -231, 32, 42, -123]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
+        let buf = VecDynAll::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<i32>> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
@@ -624,35 +700,32 @@ mod tests {
     #[test]
     fn from_empty_vec_test() {
         let vec: Vec<Rc<u32>> = Vec::new();
-        let buf = VecDyn::from(vec.clone()); // Convert into buffer
+        let buf = VecDynAll::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<u32>> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
         let vec: Vec<Rc<String>> = Vec::new();
-        let buf = VecDyn::from(vec.clone()); // Convert into buffer
+        let buf = VecDynAll::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<String>> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
         let vec: Vec<Rc<Foo>> = Vec::new();
-        let buf = VecDyn::from(vec.clone()); // Convert into buffer
+        let buf = VecDynAll::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<Foo>> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
 
     #[test]
     fn from_struct_test() {
-        let f1 = Foo {
-            a: 3,
-            b: -32,
-        };
+        let f1 = Foo { a: 3, b: -32 };
         let f2 = Foo {
             a: 33,
             b: -3342432412,
         };
         let vec: Vec<Rc<Foo>> = vec![Rc::new(f1.clone()), Rc::new(f2.clone())];
-        let buf = VecDyn::from(vec.clone()); // Convert into buffer
-        assert_eq!(Rc::new(f1), buf.get_ref::<Rc<Foo>>(0).unwrap().clone());
-        assert_eq!(Rc::new(f2), buf.get_ref::<Rc<Foo>>(1).unwrap().clone());
+        let buf = VecDynAll::from(vec.clone()); // Convert into buffer
+        assert_eq!(Rc::new(f1), buf.get_ref_as::<Rc<Foo>>(0).unwrap().clone());
+        assert_eq!(Rc::new(f2), buf.get_ref_as::<Rc<Foo>>(1).unwrap().clone());
         let nu_vec: Vec<Rc<Foo>> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
@@ -666,20 +739,35 @@ mod tests {
             String::from("bye"),
             String::from("supercalifragilisticexpialidocious"),
             String::from("42"),
-        ].into_iter().map(Rc::new).collect();
-        let buf = VecDyn::from(vec.clone()); // Convert into buffer
-        assert_eq!(&Rc::new("hi".to_string()), buf.get_ref::<Rc<String>>(0).unwrap());
-        assert_eq!(&Rc::new("hello".to_string()), buf.get_ref::<Rc<String>>(1).unwrap());
-        assert_eq!(&Rc::new("goodbye".to_string()), buf.get_ref::<Rc<String>>(2).unwrap());
+        ]
+        .into_iter()
+        .map(Rc::new)
+        .collect();
+        let buf = VecDynAll::from(vec.clone()); // Convert into buffer
+        assert_eq!(
+            &Rc::new("hi".to_string()),
+            buf.get_ref_as::<Rc<String>>(0).unwrap()
+        );
+        assert_eq!(
+            &Rc::new("hello".to_string()),
+            buf.get_ref_as::<Rc<String>>(1).unwrap()
+        );
+        assert_eq!(
+            &Rc::new("goodbye".to_string()),
+            buf.get_ref_as::<Rc<String>>(2).unwrap()
+        );
         let nu_vec: Vec<Rc<String>> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
 
     #[test]
     fn iter_test() {
-        let vec_u8: Vec<Rc<u8>> = vec![1u8, 3, 4, 1, 2, 4, 128, 32].into_iter().map(Rc::new).collect();
-        let buf = VecDyn::from(vec_u8.clone()); // Convert into buffer
-        for (i, val) in buf.iter::<Rc<u8>>().unwrap().enumerate() {
+        let vec_u8: Vec<Rc<u8>> = vec![1u8, 3, 4, 1, 2, 4, 128, 32]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
+        let buf = VecDynAll::from(vec_u8.clone()); // Convert into buffer
+        for (i, val) in buf.iter_as::<Rc<u8>>().unwrap().enumerate() {
             assert_eq!(val, &vec_u8[i]);
         }
     }
@@ -688,7 +776,7 @@ mod tests {
     fn large_sizes_clone() {
         for i in 100000..100010 {
             let vec: Vec<Rc<u8>> = vec![32u8; i].into_iter().map(Rc::new).collect();
-            let buf = VecDyn::from(vec.clone()); // Convert into buffer
+            let buf = VecDynAll::from(vec.clone()); // Convert into buffer
             let nu_vec: Vec<Rc<u8>> = buf.into_vec().unwrap(); // Convert back into vec
             assert_eq!(vec, nu_vec);
         }
@@ -699,36 +787,36 @@ mod tests {
     #[test]
     fn wrong_type_test() {
         let vec: Vec<Rc<u8>> = vec![1, 23, 2, 42, 11].into_iter().map(Rc::new).collect();
-        let mut buf = VecDyn::from(vec.clone()); // Convert into buffer
+        let mut buf = VecDynAll::from(vec.clone()); // Convert into buffer
         assert_eq!(vec, buf.clone_into_vec::<Rc<u8>>().unwrap());
 
         assert!(buf.clone_into_vec::<Rc<f64>>().is_none());
         assert!(buf.as_slice::<Rc<f64>>().is_none());
-        assert!(buf.iter::<Rc<[u8; 3]>>().is_none());
-        assert!(buf.get_ref::<Rc<i32>>(1).is_none());
-        assert!(buf.get_mut::<Rc<i32>>(2).is_none());
+        assert!(buf.iter_as::<Rc<[u8; 3]>>().is_none());
+        assert!(buf.get_ref_as::<Rc<i32>>(1).is_none());
+        assert!(buf.get_mut_as::<Rc<i32>>(2).is_none());
     }
 
     /// Test pushing values and bytes to a buffer.
     #[test]
     fn push_test() {
         let mut vec_u8: Vec<Rc<u8>> = vec![1u8, 23, 2].into_iter().map(Rc::new).collect();
-        let mut buf = VecDyn::from(vec_u8.clone()); // Convert into buffer
-        for (i, val) in buf.iter::<Rc<u8>>().unwrap().enumerate() {
+        let mut buf = VecDynAll::from(vec_u8.clone()); // Convert into buffer
+        for (i, val) in buf.iter_as::<Rc<u8>>().unwrap().enumerate() {
             assert_eq!(val, &vec_u8[i]);
         }
 
         vec_u8.push(Rc::new(42u8));
         buf.push(Rc::new(42u8)).unwrap(); // must provide explicit type
 
-        for (i, val) in buf.iter::<Rc<u8>>().unwrap().enumerate() {
+        for (i, val) in buf.iter_as::<Rc<u8>>().unwrap().enumerate() {
             assert_eq!(val, &vec_u8[i]);
         }
 
         vec_u8.push(Rc::new(11u8));
         buf.push(Rc::new(11u8)).unwrap();
 
-        for (i, val) in buf.iter::<Rc<u8>>().unwrap().enumerate() {
+        for (i, val) in buf.iter_as::<Rc<u8>>().unwrap().enumerate() {
             assert_eq!(val, &vec_u8[i]);
         }
     }
@@ -736,16 +824,16 @@ mod tests {
     /// Test appending to a buffer from another buffer.
     #[test]
     fn append_test() {
-        let mut buf = VecDyn::with_type::<Rc<u8>>(); // Create an empty buffer.
+        let mut buf = VecDynAll::with_type::<Rc<u8>>(); // Create an empty buffer.
 
         let data: Vec<Rc<u8>> = vec![1, 23, 2, 42, 11].into_iter().map(Rc::new).collect();
         // Append an ordianry vector of data.
-        let mut other_buf = VecDyn::from_vec(data.clone());
+        let mut other_buf = VecDynAll::from_vec(data.clone());
         buf.append(&mut other_buf);
 
         assert!(other_buf.is_empty());
 
-        for (i, val) in buf.iter::<Rc<u8>>().unwrap().enumerate() {
+        for (i, val) in buf.iter_as::<Rc<u8>>().unwrap().enumerate() {
             assert_eq!(val, &data[i]);
         }
     }

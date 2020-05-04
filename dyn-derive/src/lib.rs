@@ -11,6 +11,7 @@ type GenericsMap = HashMap<Ident, Punctuated<TypeParamBound, Token![+]>>;
 struct Config {
     dyn_crate_name: String,
     suffix: String,
+    build_vtable_only: bool,
 }
 
 impl Default for Config {
@@ -18,6 +19,7 @@ impl Default for Config {
         Config {
             dyn_crate_name: String::from("dyn"),
             suffix: String::from("Bytes"),
+            build_vtable_only: false,
         }
     }
 }
@@ -46,6 +48,7 @@ impl Parse for Config {
         for attrib in attribs.iter() {
             let name = attrib.ident.to_string();
             match (name.as_str(), &attrib.value) {
+                ("build_vtable_only", None) => config.build_vtable_only = true,
                 ("dyn_crate_name", Some(Lit::Str(ref lit))) => {
                     config.dyn_crate_name = lit.value().clone()
                 }
@@ -88,22 +91,51 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
         "traits with where clauses are not supported by dyn_trait"
     );
 
+    // Byte Helpers
+    let from_bytes_fn: ItemFn = parse_quote! {
+        #[inline]
+        unsafe fn from_bytes<S: 'static>(bytes: &[u8]) -> &S {
+            assert_eq!(bytes.len(), std::mem::size_of::<S>());
+            &*(bytes.as_ptr() as *const S)
+        }
+    };
+
+    let from_bytes_mut_fn: ItemFn = parse_quote! {
+        #[inline]
+        unsafe fn from_bytes_mut<S: 'static>(bytes: &mut [u8]) -> &mut S {
+            assert_eq!(bytes.len(), std::mem::size_of::<S>());
+            &mut *(bytes.as_mut_ptr() as *mut S)
+        }
+    };
+
+    let box_into_box_bytes_fn: ItemFn = parse_quote! {
+        #[inline]
+        fn box_into_box_bytes<S: 'static>(b: Box<S>) -> Box<[u8]> {
+            let byte_ptr = Box::into_raw(b) as *mut u8;
+            // This is safe since any memory can be represented by bytes and we are looking at
+            // sized types only.
+            unsafe { Box::from_raw(std::slice::from_raw_parts_mut(byte_ptr, std::mem::size_of::<S>())) }
+        }
+    };
+
     // Implement known trait functions.
     let clone_fn: (TypeBareFn, ItemFn) = (
         parse_quote! { unsafe fn (&[u8]) -> Box<[u8]> },
         parse_quote! {
+            #[inline]
             unsafe fn clone_fn<S: Clone + 'static>(src: &[u8]) -> Box<[u8]> {
-                let typed_src: &S = Bytes::from_bytes(src);
-                Bytes::box_into_box_bytes(Box::new(typed_src.clone()))
+                let typed_src: &S = from_bytes(src);
+                box_into_box_bytes(Box::new(typed_src.clone()))
             }
         }
     );
     let clone_from_fn: (TypeBareFn, ItemFn) = (
         parse_quote! { unsafe fn (&mut [u8], &[u8]) },
         parse_quote! {
+            #[inline]
             unsafe fn clone_from_fn<S: Clone + 'static>(dst: &mut [u8], src: &[u8]) {
-                let typed_src: &S = Bytes::from_bytes(src);
-                let typed_dst: &mut S = Bytes::from_bytes_mut(dst);
+                let typed_src: &S = from_bytes(src);
+                let typed_dst: &mut S = from_bytes_mut(dst);
                 typed_dst.clone_from(typed_src);
             }
         }
@@ -111,8 +143,9 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
     let eq_fn: (TypeBareFn, ItemFn) = (
         parse_quote! { unsafe fn (&[u8], &[u8]) -> bool },
         parse_quote! {
+            #[inline]
             unsafe fn eq_fn<S: PartialEq + 'static>(a: &[u8], b: &[u8]) -> bool {
-                let (a, b): (&S, &S) = (Bytes::from_bytes(a), Bytes::from_bytes(b));
+                let (a, b): (&S, &S) = (from_bytes(a), from_bytes(b));
                 a.eq(b)
             }
         }
@@ -120,8 +153,9 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
     let hash_fn: (TypeBareFn, ItemFn) = (
         parse_quote! { unsafe fn (&[u8], &mut dyn std::hash::Hasher) },
         parse_quote! {
+            #[inline]
             unsafe fn hash_fn<S: std::hash::Hash + 'static>(bytes: &[u8], mut state: &mut dyn std::hash::Hasher) {
-                let typed_data: &S = Bytes::from_bytes(bytes);
+                let typed_data: &S = from_bytes(bytes);
                 typed_data.hash(&mut state)
             }
         }
@@ -129,8 +163,9 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
     let fmt_fn: (TypeBareFn, ItemFn) = (
         parse_quote! { unsafe fn (&[u8], &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> },
         parse_quote! {
+            #[inline]
             unsafe fn fmt_fn<S: std::fmt::Debug + 'static>(bytes: &[u8], f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-                let typed_data: &S = Bytes::from_bytes(bytes);
+                let typed_data: &S = from_bytes(bytes);
                 typed_data.fmt(f)
             }
         }
@@ -139,6 +174,7 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
     let mut known_traits: HashMap<Path, Vec<(TypeBareFn, ItemFn)>> = HashMap::new();
     known_traits.insert(parse_quote! { Clone }, vec![clone_fn, clone_from_fn]);
     known_traits.insert(parse_quote! { PartialEq }, vec![eq_fn]);
+    known_traits.insert(parse_quote! { Eq }, vec![]);
     known_traits.insert(parse_quote! { std::hash::Hash }, vec![hash_fn]);
     known_traits.insert(parse_quote! { std::fmt::Debug }, vec![fmt_fn]);
 
@@ -147,6 +183,7 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
 
     let vis = item_trait.vis.clone();
 
+    // Construct the vtable of traits and their associated functions used by this trait item.
     let vtable: Vec<_> = item_trait.supertraits.iter().filter_map(|bound| {
         match bound {
             TypeParamBound::Trait(bound) => {
@@ -219,13 +256,10 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
             let expr: Expr = parse_quote! { #fn_name::<T> };
             expr
         }).collect::<Punctuated<Expr, Token![,]>>();
-        let tuple: Expr = if fields.len() > 1 {
-            parse_quote! { (#fields) }
-        } else {
-            parse_quote! { #fields }
-        };
+        let tuple: Expr = parse_quote! { (#fields) };
         tuple
     }).collect::<Punctuated<Expr, Token![,]>>();
+
 
     let crate_name = Ident::new(&config.dyn_crate_name, Span::call_site());
 
@@ -240,21 +274,25 @@ fn construct_dyn_items(item_trait: &ItemTrait, config: &Config) -> TokenStream {
         build_vtable_block.append_all(quote! { #fn_def });
     }
 
-    build_vtable_block.append_all(quote! { #vtable_name(#vtable_constructor) });
-
-    quote! {
+    let res = quote! {
+        #[derive(Copy, Clone)]
         #vis struct #vtable_name (#vtable_fields);
         
         #has_impls
 
-        impl<T: #trait_name + 'static> #crate_name::Dyn for T {
-            type VTable = #vtable_name;
+        impl<T: #trait_name + 'static> #crate_name::VTable<T> for #vtable_name {
             #[inline]
-            fn build_vtable() -> Self::VTable {
+            fn build_vtable() -> #vtable_name {
+                #from_bytes_fn
+                #from_bytes_mut_fn
+                #box_into_box_bytes_fn
                 #build_vtable_block
+                #vtable_name(#vtable_constructor)
             }
         }
-    }
+    };
+
+    res
 }
 
 #[proc_macro_attribute]

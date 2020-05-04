@@ -4,11 +4,11 @@
 //! - [Notes on Type Layouts aand ABIs in Rust](https://gankra.github.io/blah/rust-layouts-and-abis/)
 use std::mem::size_of;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::slice;
+use std::sync::Arc;
 
 /// A trait defining a safe way to convert to and from byte pointers and slices.
-pub trait Bytes
+pub(crate) trait Bytes
 where
     Self: Sized + 'static,
 {
@@ -136,17 +136,48 @@ where
     unsafe fn box_from_box_bytes(b: Box<[u8]>) -> Box<Self> {
         Box::from_raw(Box::into_raw(b) as *mut Self)
     }
+
+    #[inline]
+    fn try_into_usize(self) -> Option<usize> {
+        // This is safe since all bit representations with size `size_of::<usize>` are valid usize
+        // values.
+        unsafe {
+            if size_of::<Self>() == size_of::<usize>() {
+                Some(std::mem::transmute_copy(&self))
+            } else {
+                None
+            }
+        }
+    }
+
+    /// This function returns `None` if the size of `Self` is not the same as the size of `usize`.
+    /// All other checks are left up to the user.
+    #[inline]
+    unsafe fn try_from_usize(b: usize) -> Option<Self> {
+        if size_of::<Self>() == size_of::<usize>() {
+            Some(std::mem::transmute_copy(&b))
+        } else {
+            None
+        }
+    }
 }
 
-// This is of course wilidly unsafe, but it makes the tests compile for now.
+// It is assumed that any Rust type has a valid representation in bytes. This library has an
+// inherently more relaxed requirement than crates like [`zerocopy`] or [`bytemuck`] since the
+// representative bytes cannot be modified or inspected by the safe API exposed by this library,
+// they can only be copied.
+//
+// Further, the bytes representing a type are never interpreted as
+// anything other than a type with an identical `TypeId`, which are assumed to have an identical
+// memory layout throughout the execution of the program.
+//
+// For non-Copy types, memory safety is ensured by effectively forgetting reinterpreted memory,
+// thus inhibiting any drop calls, which would otherwise could cause dangling references when the
+// memory is reinterpreted back into the original type.
+//
+// In summary, reinterpreting types as bytes is dangerous, but it should not cause undefined
+// behavior if it is done carefully.
+//
+// [`bytemuck`]: https://crates.io/crates/bytemuck
+// [`zerocopy`]: https://crates.io/crates/zerocopy
 impl<T> Bytes for T where T: 'static {}
-
-pub unsafe trait IntoRaw<T>: Sized {
-    /// Performs conversion into a raw type `T`.
-    fn into_raw(self) -> T;
-}
-
-pub unsafe trait FromRaw<T>: Sized {
-    /// Performs conversion from a raw type `T` into `Self`.
-    fn from_raw(_: T) -> Self;
-}
