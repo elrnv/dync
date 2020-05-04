@@ -55,7 +55,7 @@ impl<V: HasPartialEq> PartialEq for VecDyn<V> {
     }
 }
 
-impl<V: HasEq> Eq for VecDyn<V> { }
+impl<V: HasEq> Eq for VecDyn<V> {}
 
 impl<V: HasHash> std::hash::Hash for VecDyn<V> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
