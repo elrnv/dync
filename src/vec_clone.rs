@@ -58,9 +58,9 @@ impl VecClone {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::with_type_non_copy::<T>() }),
-            clone_fn: CloneFn(T::clone_bytes),
-            clone_from_fn: CloneFromFn(T::clone_from_bytes),
-            drop_fn: DropFn(T::drop_bytes),
+            clone_fn: T::clone_bytes,
+            clone_from_fn: T::clone_from_bytes,
+            drop_fn: T::drop_bytes,
         }
     }
 
@@ -82,9 +82,9 @@ impl VecClone {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::with_capacity_non_copy::<T>(n) }),
-            clone_fn: CloneFn(T::clone_bytes),
-            clone_from_fn: CloneFromFn(T::clone_from_bytes),
-            drop_fn: DropFn(T::drop_bytes),
+            clone_fn: T::clone_bytes,
+            clone_from_fn: T::clone_from_bytes,
+            drop_fn: T::drop_bytes,
         }
     }
 
@@ -96,9 +96,9 @@ impl VecClone {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_vec_non_copy(vec![def; n]) }),
-            clone_fn: CloneFn(T::clone_bytes),
-            clone_from_fn: CloneFromFn(T::clone_from_bytes),
-            drop_fn: DropFn(T::drop_bytes),
+            clone_fn: T::clone_bytes,
+            clone_from_fn: T::clone_from_bytes,
+            drop_fn: T::drop_bytes,
         }
     }
 
@@ -109,9 +109,9 @@ impl VecClone {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_vec_non_copy(vec) }),
-            clone_fn: CloneFn(T::clone_bytes),
-            clone_from_fn: CloneFromFn(T::clone_from_bytes),
-            drop_fn: DropFn(T::drop_bytes),
+            clone_fn: T::clone_bytes,
+            clone_from_fn: T::clone_from_bytes,
+            drop_fn: T::drop_bytes,
         }
     }
 
@@ -122,9 +122,9 @@ impl VecClone {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_slice_non_copy::<T>(slice) }),
-            clone_fn: CloneFn(T::clone_bytes),
-            clone_from_fn: CloneFromFn(T::clone_from_bytes),
-            drop_fn: DropFn(T::drop_bytes),
+            clone_fn: T::clone_bytes,
+            clone_from_fn: T::clone_from_bytes,
+            drop_fn: T::drop_bytes,
         }
     }
 
@@ -508,9 +508,9 @@ impl From<VecCopy> for VecClone {
         // default empty implementations for clone and drop.
         VecClone {
             data: ManuallyDrop::new(data),
-            clone_fn: CloneFn(|v: &[u8]| v.to_vec().into_boxed_slice()),
-            clone_from_fn: CloneFromFn(|_, _| {}),
-            drop_fn: DropFn(|_| {}),
+            clone_fn: |v: &[u8]| v.to_vec().into_boxed_slice(),
+            clone_from_fn: |_, _| {},
+            drop_fn: |_| {},
         }
     }
 }

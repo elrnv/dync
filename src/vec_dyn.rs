@@ -24,7 +24,7 @@ impl<V> Drop for VecDyn<V> {
     fn drop(&mut self) {
         unsafe {
             for elem_bytes in self.data.byte_chunks_mut() {
-                self.vtable.drop_fn().0(elem_bytes);
+                self.vtable.drop_fn()(elem_bytes);
             }
         }
     }
@@ -85,7 +85,7 @@ impl<V> VecDyn<V> {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::with_type_non_copy::<T>() }),
-            vtable: Arc::new((DropFn(T::drop_bytes), V::build_vtable())),
+            vtable: Arc::new((T::drop_bytes, V::build_vtable())),
         }
     }
 
@@ -108,7 +108,7 @@ impl<V> VecDyn<V> {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::with_capacity_non_copy::<T>(n) }),
-            vtable: Arc::new((DropFn(T::drop_bytes), V::build_vtable())),
+            vtable: Arc::new((T::drop_bytes, V::build_vtable())),
         }
     }
 
@@ -122,7 +122,7 @@ impl<V> VecDyn<V> {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_vec_non_copy(vec) }),
-            vtable: Arc::new((DropFn(T::drop_bytes), V::build_vtable())),
+            vtable: Arc::new((T::drop_bytes, V::build_vtable())),
         }
     }
 
@@ -132,7 +132,7 @@ impl<V> VecDyn<V> {
         // Drop all elements manually.
         unsafe {
             for bytes in self.data.byte_chunks_mut() {
-                self.vtable.drop_fn().0(bytes);
+                self.vtable.drop_fn()(bytes);
             }
         }
         self.data.data.clear();
@@ -429,7 +429,7 @@ impl<V: HasClone> VecDyn<V> {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_vec_non_copy(vec![def; n]) }),
-            vtable: Arc::new((DropFn(T::drop_bytes), V::build_vtable())),
+            vtable: Arc::new((T::drop_bytes, V::build_vtable())),
         }
     }
 
@@ -443,7 +443,7 @@ impl<V: HasClone> VecDyn<V> {
             // This is safe because we are handling the additional processing needed
             // by `Clone` types in this container.
             data: ManuallyDrop::new(unsafe { VecCopy::from_slice_non_copy::<T>(slice) }),
-            vtable: Arc::new((DropFn(T::drop_bytes), V::build_vtable())),
+            vtable: Arc::new((T::drop_bytes, V::build_vtable())),
         }
     }
 
@@ -469,7 +469,7 @@ impl<V: HasClone> VecDyn<V> {
             // Drop trailing elements manually.
             unsafe {
                 for bytes in self.data.byte_chunks_mut().skip(new_len) {
-                    self.vtable.drop_fn().0(bytes);
+                    self.vtable.drop_fn()(bytes);
                 }
             }
             // Truncate data

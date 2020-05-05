@@ -102,57 +102,85 @@ impl<T: fmt::Debug + 'static> DebugBytes for T {
     }
 }
 
-pub(crate) type CloneFnType = unsafe fn(&[u8]) -> Box<[u8]>;
-pub(crate) type CloneFromFnType = unsafe fn(&mut [u8], &[u8]);
-pub(crate) type CloneIntoRawFnType = unsafe fn(&[u8], &mut [u8]);
-pub(crate) type EqFnType = unsafe fn(&[u8], &[u8]) -> bool;
-pub(crate) type HashFnType = unsafe fn(&[u8], &mut dyn Hasher);
-pub(crate) type FmtFnType = unsafe fn(&[u8], &mut fmt::Formatter) -> Result<(), fmt::Error>;
-pub(crate) type DropFnType = unsafe fn(&mut [u8]);
+pub type CloneFn = unsafe fn(&[u8]) -> Box<[u8]>;
+pub type CloneFromFn = unsafe fn(&mut [u8], &[u8]);
+pub type CloneIntoRawFn = unsafe fn(&[u8], &mut [u8]);
+pub type EqFn = unsafe fn(&[u8], &[u8]) -> bool;
+pub type HashFn = unsafe fn(&[u8], &mut dyn Hasher);
+pub type FmtFn = unsafe fn(&[u8], &mut fmt::Formatter) -> Result<(), fmt::Error>;
+pub(crate) type DropFn = unsafe fn(&mut [u8]);
 
-macro_rules! impl_fn_wrapper {
-    (derive() struct $fn:ident ( $fn_type:ident )) => {
-        pub struct $fn (pub(crate) $fn_type);
+pub(crate) trait HasDrop {
+    fn drop_fn(&self) -> &DropFn;
+}
 
-        impl_fn_wrapper!(@impls $fn ( $fn_type ));
-    };
-    ($derives:meta struct $fn:ident ( $fn_type:ident )) => {
-        #[$derives]
-        pub struct $fn (pub(crate) $fn_type);
+pub trait HasClone {
+    fn clone_fn(&self) -> &CloneFn;
+    fn clone_from_fn(&self) -> &CloneFromFn;
+    fn clone_into_raw_fn(&self) -> &CloneIntoRawFn;
+}
 
-        impl_fn_wrapper!(@impls $fn ( $fn_type ));
-    };
-    (@impls $fn:ident ( $fn_type:ident )) => {
-        //impl $fn {
-        //    pub fn new(f: $fn_type) -> Self {
-        //        $fn(f)
-        //    }
-        //}
+pub trait HasHash {
+    fn hash_fn(&self) -> &HashFn;
+}
 
-        impl fmt::Debug for $fn {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.debug_tuple(stringify!($fn)).finish()
-            }
-        }
+pub trait HasPartialEq {
+    fn eq_fn(&self) -> &EqFn;
+}
 
-        impl PartialEq for $fn {
-            fn eq(&self, _: &Self) -> bool {
-                // Equality is completely determined by VecCopy.
-                true
-            }
-        }
+pub trait HasEq: HasPartialEq {}
 
-        impl Hash for $fn {
-            fn hash<H: Hasher>(&self, state: &mut H) {
-                (self.0 as usize).hash(state);
-            }
-        }
+pub trait HasDebug {
+    fn fmt_fn(&self) -> &FmtFn;
+}
+
+pub struct CloneVTable(pub CloneFn, pub CloneFromFn, pub CloneIntoRawFn);
+pub struct DropVTable(pub DropFn);
+pub struct PartialEqVTable(pub EqFn);
+pub struct EqVTable(pub EqFn);
+pub struct HashVTable(pub HashFn);
+pub struct DebugVTable(pub FmtFn);
+
+impl HasDrop for DropVTable {
+    fn drop_fn(&self) -> &DropFn {
+        &self.0
     }
 }
 
-impl_fn_wrapper!(derive(Copy, Clone) struct CloneFn(CloneFnType));
-impl_fn_wrapper!(derive(Copy, Clone) struct CloneFromFn(CloneFromFnType));
-impl_fn_wrapper!(derive(Copy, Clone) struct EqFn(EqFnType));
-impl_fn_wrapper!(derive(Copy, Clone) struct HashFn(HashFnType));
-impl_fn_wrapper!(derive(Copy, Clone) struct FmtFn(FmtFnType));
-impl_fn_wrapper!(derive(Copy, Clone) struct DropFn(DropFnType));
+impl HasClone for CloneVTable {
+    fn clone_fn(&self) -> &CloneFn {
+        &self.0
+    }
+    fn clone_from_fn(&self) -> &CloneFromFn {
+        &self.1
+    }
+    fn clone_into_raw_fn(&self) -> &CloneIntoRawFn {
+        &self.2
+    }
+}
+
+impl HasHash for HashVTable {
+    fn hash_fn(&self) -> &HashFn {
+        &self.0
+    }
+}
+
+impl HasPartialEq for PartialEqVTable {
+    fn eq_fn(&self) -> &EqFn {
+        &self.0
+    }
+}
+
+impl HasPartialEq for EqVTable {
+    fn eq_fn(&self) -> &EqFn {
+        &self.0
+    }
+}
+
+impl HasEq for EqVTable {}
+
+impl HasDebug for DebugVTable {
+    fn fmt_fn(&self) -> &FmtFn {
+        &self.0
+    }
+}

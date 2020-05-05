@@ -25,7 +25,7 @@ use num_traits::{cast, NumCast, Zero};
 
 pub mod macros;
 mod bytes;
-mod traits;
+pub mod traits;
 #[macro_use]
 mod value;
 mod vec_dyn;
@@ -57,8 +57,8 @@ pub(crate) mod serde_helpers {
 }
 
 use bytes::Bytes;
+pub use dync_derive::dync_trait;
 pub use value::*;
-pub use value::{CopyValueMut, CopyValueRef};
 pub use vec_dyn::*;
 
 pub trait Elem: Any + Copy {}

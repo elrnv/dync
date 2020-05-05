@@ -50,8 +50,8 @@ impl BoxValue {
         BoxValue {
             bytes: ManuallyDrop::new(Bytes::box_into_box_bytes(typed)),
             type_id: TypeId::of::<T>(),
-            clone_fn: CloneFn(T::clone_bytes),
-            drop_fn: DropFn(T::drop_bytes),
+            clone_fn: T::clone_bytes,
+            drop_fn: T::drop_bytes,
         }
     }
 
@@ -73,126 +73,6 @@ impl BoxValue {
         self.downcast_with::<T, _, _>(|mut b| unsafe {
             Bytes::box_from_box_bytes(ManuallyDrop::take(&mut b.bytes))
         })
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct RcValue {
-    pub(crate) bytes: ManuallyDrop<Rc<[u8]>>,
-    pub(crate) type_id: TypeId,
-    pub(crate) drop_fn: DropFn,
-    // We don't need a clone function here since cloning an Rc is independent of the value it
-    // contains.
-}
-
-impl Drop for RcValue {
-    fn drop(&mut self) {
-        unsafe {
-            // If we have unique access, drop the contents.
-            if let Some(bytes) = Rc::get_mut(&mut self.bytes) {
-                self.drop_fn.0(bytes)
-            }
-            // Now drop the Rc<[u8]>. This is safe because self will not be used after this.
-            let _ = ManuallyDrop::take(&mut self.bytes);
-        }
-    }
-}
-
-impl RcValue {
-    impl_value_base!();
-
-    #[inline]
-    pub fn new<T: DropBytes + 'static>(typed: Rc<T>) -> RcValue {
-        RcValue {
-            bytes: ManuallyDrop::new(Bytes::rc_into_rc_bytes(typed)),
-            type_id: TypeId::of::<T>(),
-            drop_fn: DropFn(T::drop_bytes),
-        }
-    }
-
-    //#[inline]
-    //pub(crate) unsafe fn clone_from_bytes(bytes: &[u8], type_id: TypeId, drop_fn: DropFn) -> RcValue {
-    //    debug_assert_eq!(bytes.len(), std::mem::size_of::<usize>());
-    //    RcValue {
-    //        bytes: Rc::clone(Rc::<[u8]>::from_bytes(bytes)),
-    //        type_id,
-    //        drop_fn,
-    //    }
-    //}
-
-    /// Downcast this value reference into an `Rc<T>` type. Return `None` if the downcast fails.
-    #[inline]
-    pub fn downcast<T: 'static>(self) -> Option<Rc<T>> {
-        // This is safe since we check that self.bytes represent a `T`.
-        self.downcast_with::<T, _, _>(|mut b| unsafe {
-            Bytes::rc_from_rc_bytes(ManuallyDrop::take(&mut b.bytes))
-        })
-    }
-}
-
-impl<T: 'static> From<Rc<T>> for RcValue {
-    #[inline]
-    fn from(rc: Rc<T>) -> RcValue {
-        RcValue::new(rc)
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct ArcValue {
-    pub(crate) bytes: ManuallyDrop<Arc<[u8]>>,
-    pub(crate) type_id: TypeId,
-    pub(crate) drop_fn: DropFn,
-}
-
-impl Drop for ArcValue {
-    fn drop(&mut self) {
-        unsafe {
-            // If we have unique access, drop the contents.
-            if let Some(bytes) = Arc::get_mut(&mut self.bytes) {
-                self.drop_fn.0(bytes)
-            }
-            // Now drop the Arc<[u8]>. This is safe because self will not be used after this.
-            let _ = ManuallyDrop::take(&mut self.bytes);
-        }
-    }
-}
-
-impl ArcValue {
-    impl_value_base!();
-
-    #[inline]
-    pub fn new<T: 'static>(typed: Arc<T>) -> ArcValue {
-        ArcValue {
-            bytes: ManuallyDrop::new(Bytes::arc_into_arc_bytes(typed)),
-            type_id: TypeId::of::<T>(),
-            drop_fn: DropFn(Arc::<T>::drop_bytes),
-        }
-    }
-
-    //#[inline]
-    //pub(crate) unsafe fn clone_from_bytes(bytes: &[u8], type_id: TypeId, drop_fn: DropFn) -> ArcValue {
-    //    debug_assert_eq!(bytes.len(), std::mem::size_of::<usize>());
-    //    ArcValue {
-    //        bytes: Arc::clone(Arc::<[u8]>::from_bytes(bytes)),
-    //        type_id,
-    //        drop_fn,
-    //    }
-    //}
-
-    /// Downcast this value reference into an `Arc<T>` type. Return `None` if the downcast fails.
-    #[inline]
-    pub fn downcast<T: 'static>(self) -> Option<Arc<T>> {
-        // This is safe since we check that self.bytes represent a `T`.
-        self.downcast_with::<T, _, _>(|mut b| unsafe {
-            Bytes::arc_from_arc_bytes(ManuallyDrop::take(&mut b.bytes))
-        })
-    }
-}
-
-impl<T: 'static> From<Arc<T>> for ArcValue {
-    #[inline]
-    fn from(arc: Arc<T>) -> ArcValue {
-        ArcValue::new(arc)
     }
 }
 
@@ -263,7 +143,7 @@ impl<'a> CloneValueMut<'a> {
     pub(crate) unsafe fn from_raw_parts(
         bytes: &'a mut [u8],
         type_id: TypeId,
-        clone_from_fn: CloneFromFnType,
+        clone_from_fn: CloneFromFn,
     ) -> CloneValueMut<'a> {
         CloneValueMut {
             bytes,
