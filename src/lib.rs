@@ -28,6 +28,7 @@ mod bytes;
 pub mod traits;
 #[macro_use]
 mod value;
+mod slice_copy;
 mod vec_dyn;
 
 #[cfg(feature = "testing")]
@@ -58,6 +59,7 @@ pub(crate) mod serde_helpers {
 
 use bytes::Bytes;
 pub use dync_derive::dync_trait;
+pub use slice_copy::*;
 pub use value::*;
 pub use vec_dyn::*;
 
@@ -696,8 +698,8 @@ impl VecCopy {
     ///
     /// # Safety
     ///
-    /// It is assumed that that the buffer contains elements of type `T`, otherwise this function
-    /// will cause undefined behavior.
+    /// It is assumed that that the buffer contains elements of type `T` and that `i` is strictly
+    /// less than the length of this vector, otherwise this function will cause undefined behavior.
     #[inline]
     pub unsafe fn get_unchecked<T: Elem>(&self, i: usize) -> T {
         let ptr = self.data.as_ptr() as *const T;
@@ -705,14 +707,15 @@ impl VecCopy {
     }
 
     /// Get a `const` reference to the `i`'th element of the buffer.
+    ///
     /// This can be used to reinterpret the internal data as a different type. Note that if the
     /// size of the given type `T` doesn't match the size of the internal type, `i` will really
     /// index the `i`th `T` sized chunk in the current buffer. See the implementation for details.
     ///
     /// # Safety
     ///
-    /// It is assumed that that the buffer contains elements of type `T`, otherwise this function
-    /// will cause undefined behavior.
+    /// It is assumed that that the buffer contains elements of type `T` and that `i` is strictly
+    /// less than the length of this vector, otherwise this function will cause undefined behavior.
     #[inline]
     pub unsafe fn get_unchecked_ref<T: Elem>(&self, i: usize) -> &T {
         let ptr = self.data.as_ptr() as *const T;
@@ -720,14 +723,15 @@ impl VecCopy {
     }
 
     /// Get a mutable reference to the `i`'th element of the buffer.
+    ///
     /// This can be used to reinterpret the internal data as a different type. Note that if the
     /// size of the given type `T` doesn't match the size of the internal type, `i` will really
     /// index the `i`th `T` sized chunk in the current buffer. See the implementation for details.
     ///
     /// # Safety
     ///
-    /// It is assumed that that the buffer contains elements of type `T`, otherwise this function
-    /// will cause undefined behavior.
+    /// It is assumed that that the buffer contains elements of type `T` and that `i` is strictly
+    /// less than the length of this vector, otherwise this function will cause undefined behavior.
     #[inline]
     pub unsafe fn get_unchecked_mut<T: Elem>(&mut self, i: usize) -> &mut T {
         let ptr = self.data.as_mut_ptr() as *mut T;

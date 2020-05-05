@@ -335,13 +335,14 @@ fn construct_dync_items(
     let vtable_fields: Punctuated<Field, Token![,]> = super_traits
         .iter()
         .flat_map(|trait_path| {
-            let (_, fns) = impls.get(&trait_path).unwrap();
-            fns.iter().map(|(fn_type, _)| Field {
-                attrs: Vec::new(),
-                vis: Visibility::Inherited,
-                ident: None,
-                colon_token: None,
-                ty: parse_quote! { #crate_name ::traits:: #fn_type },
+            impls.get(&trait_path).into_iter().flat_map(|(_, fns)| {
+                fns.iter().map(|(fn_type, _)| Field {
+                    attrs: Vec::new(),
+                    vis: Visibility::Inherited,
+                    ident: None,
+                    colon_token: None,
+                    ty: parse_quote! { #crate_name ::traits:: #fn_type },
+                })
             })
         })
         .collect();
@@ -350,7 +351,11 @@ fn construct_dync_items(
 
     let mut fn_idx_usize = 0;
     for trait_path in super_traits.iter() {
-        let (_, fns) = impls.get(&trait_path).unwrap();
+        let impl_entry = impls.get(&trait_path);
+        if impl_entry.is_none() {
+            continue;
+        }
+        let (_, fns) = impl_entry.unwrap();
         let mut methods = TokenStream::new();
         for (fn_type, fn_name) in fns.iter() {
             let fn_idx = syn::Index::from(fn_idx_usize);
@@ -378,20 +383,25 @@ fn construct_dync_items(
         .iter()
         .flat_map(|trait_path| {
             let crate_name = &crate_name;
-            let (_, fns) = impls.get(&trait_path).unwrap();
-            let trait_ident = &trait_path.segments.last().unwrap().ident;
-            let bytes_trait = Ident::new(&format!("{}Bytes", trait_ident), Span::call_site());
-            fns.iter().map(move |(_, fn_name)| {
-                let fn_name_string = fn_name.to_string();
-                let bytes_fn = Ident::new(
-                    &format!("{}_bytes", &fn_name_string[..fn_name_string.len() - 3]),
-                    Span::call_site(),
-                );
-                let tuple: Expr =
-                    parse_quote! { <T as #crate_name ::traits:: #bytes_trait> :: #bytes_fn };
-                //eprintln!("{}", quote! { #tuple });
-                tuple
-            })
+            impls
+                .get(&trait_path)
+                .into_iter()
+                .flat_map(move |(_, fns)| {
+                    let trait_ident = &trait_path.segments.last().unwrap().ident;
+                    let bytes_trait =
+                        Ident::new(&format!("{}Bytes", trait_ident), Span::call_site());
+                    fns.iter().map(move |(_, fn_name)| {
+                    let fn_name_string = fn_name.to_string();
+                    let bytes_fn = Ident::new(
+                        &format!("{}_bytes", &fn_name_string[..fn_name_string.len() - 3]),
+                        Span::call_site(),
+                    );
+                    let tuple: Expr =
+                        parse_quote! { <T as #crate_name ::traits:: #bytes_trait> :: #bytes_fn };
+                    //eprintln!("{}", quote! { #tuple });
+                    tuple
+                })
+                })
         })
         .collect::<Punctuated<Expr, Token![,]>>();
 
@@ -415,28 +425,31 @@ fn construct_dync_items(
 
         if let Some(super_traits) = trait_inheritance.get(base_trait_path) {
             for trait_path in super_traits.iter() {
-                let (_, fns) = impls.get(&trait_path).unwrap();
+                if let Some((_, fns)) = impls.get(&trait_path) {
+                    for (_, fn_name) in fns.iter() {
+                        conversion_exprs.push(parse_quote! { *base.#fn_name() });
+                    }
+                }
+            }
+        } else {
+            if let Some((_, fns)) = impls.get(&base_trait_path) {
                 for (_, fn_name) in fns.iter() {
                     conversion_exprs.push(parse_quote! { *base.#fn_name() });
                 }
             }
-        } else {
-            let (_, fns) = impls.get(&base_trait_path).unwrap();
-            for (_, fn_name) in fns.iter() {
-                conversion_exprs.push(parse_quote! { *base.#fn_name() });
-            }
         }
 
-        let (base_vtable_path, _) = impls.get(&base_trait_path).unwrap();
-        // super trait is a custom one, we should be able to define the conversion
-        res.push(parse_quote! {
-            impl From<#vtable_name> for #base_vtable_path {
-                fn from(base: #vtable_name) -> Self {
-                    use #crate_name :: traits::*;
-                    #base_vtable_path ( #conversion_exprs )
+        if let Some((base_vtable_path, _)) = impls.get(&base_trait_path) {
+            // super trait is a custom one, we should be able to define the conversion
+            res.push(parse_quote! {
+                impl From<#vtable_name> for #base_vtable_path {
+                    fn from(base: #vtable_name) -> Self {
+                        use #crate_name :: traits::*;
+                        #base_vtable_path ( #conversion_exprs )
+                    }
                 }
-            }
-        });
+            });
+        }
 
         //let a = res.last().unwrap();
         //eprintln!("{}", quote! { #a } );

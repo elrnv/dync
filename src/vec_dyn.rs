@@ -11,6 +11,8 @@ use crate::traits::*;
 use crate::value::*;
 use crate::VecCopy;
 
+// TODO: Move the vtable to VecCopy, and have VecDyn just add the drop functionality to everything.
+
 pub trait Elem: Any + DropBytes {}
 impl<T> Elem for T where T: Any + DropBytes {}
 
@@ -413,6 +415,46 @@ impl<V> VecDyn<V> {
         } = &mut **data;
         data.chunks_exact_mut(*element_size)
             .map(move |bytes| unsafe { ValueMut::from_raw_parts(bytes, *element_type_id, vtable) })
+    }
+
+    /*
+     * Advanced Accessors
+     */
+
+    /// Get a `const` reference to the `i`'th element of the vector.
+    ///
+    /// This can be used to reinterpret the internal data as a different type. Note that if the
+    /// size of the given type `T` doesn't match the size of the internal type, `i` will really
+    /// index the `i`th `T` sized chunk in the current vector. See the implementation for details.
+    ///
+    /// # Safety
+    ///
+    /// It is assumed that that the vector contains elements of type `T` and that `i` is strictly
+    /// less than the length of this vector, otherwise this function may cause undefined behavior.
+    ///
+    /// This function is a complete opt-out of all safety checks.
+    #[inline]
+    pub unsafe fn get_unchecked_ref<T: Any>(&self, i: usize) -> &T {
+        let ptr = self.data.data.as_ptr() as *const T;
+        &*ptr.add(i)
+    }
+
+    /// Get a mutable reference to the `i`'th element of the vector.
+    ///
+    /// This can be used to reinterpret the internal data as a different type. Note that if the
+    /// size of the given type `T` doesn't match the size of the internal type, `i` will really
+    /// index the `i`th `T` sized chunk in the current vector. See the implementation for details.
+    ///
+    /// # Safety
+    ///
+    /// It is assumed that that the vector contains elements of type `T` and that `i` is strictly
+    /// less than the length of this vector, otherwise this function may cause undefined behavior.
+    ///
+    /// This function is opts-out of all safety checks.
+    #[inline]
+    pub unsafe fn get_unchecked_mut<T: Any>(&mut self, i: usize) -> &mut T {
+        let ptr = self.data.data.as_mut_ptr() as *mut T;
+        &mut *ptr.add(i)
     }
 }
 

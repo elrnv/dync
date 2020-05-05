@@ -350,6 +350,12 @@ pub trait VTable<T> {
     fn build_vtable() -> Self;
 }
 
+impl<T: Copy> VTable<T> for () {
+    fn build_vtable() -> Self {
+        ()
+    }
+}
+
 impl<B: GetBytes, V> Value<B, V> {
     impl_value_base!();
 }
@@ -389,13 +395,13 @@ impl<V> Value<usize, V> {
 /// how to drop themselves.
 #[derive(Clone)]
 pub(crate) enum VTableRef<'a, V> {
-    Ref(&'a (DropFn, V)),
-    Owned(Box<(DropFn, V)>),
+    Ref(&'a V),
+    Owned(Box<V>),
 }
 
-impl<'a, V> AsRef<(DropFn, V)> for VTableRef<'a, V> {
+impl<'a, V> AsRef<V> for VTableRef<'a, V> {
     #[inline]
-    fn as_ref(&self) -> &(DropFn, V) {
+    fn as_ref(&self) -> &V {
         match self {
             VTableRef::Ref(v) => v,
             VTableRef::Owned(v) => &*v,
@@ -408,7 +414,7 @@ impl<'a, V> AsRef<(DropFn, V)> for VTableRef<'a, V> {
 pub struct ValueRef<'a, V> {
     pub(crate) bytes: &'a [u8],
     pub(crate) type_id: TypeId,
-    pub(crate) vtable: VTableRef<'a, V>,
+    pub(crate) vtable: VTableRef<'a, (DropFn, V)>,
 }
 
 impl<'a, V: HasHash> Hash for ValueRef<'a, V> {
@@ -513,7 +519,7 @@ impl<'a, V> ValueRef<'a, V> {
 pub struct ValueMut<'a, V> {
     pub(crate) bytes: &'a mut [u8],
     pub(crate) type_id: TypeId,
-    pub(crate) vtable: VTableRef<'a, V>,
+    pub(crate) vtable: VTableRef<'a, (DropFn, V)>,
 }
 
 impl<'a, V: HasDebug> fmt::Debug for ValueMut<'a, V> {
