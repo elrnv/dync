@@ -32,8 +32,6 @@ pub trait PartialEqBytes: PartialEq {
     //unsafe fn eq_bytes(a: &[u8], b: &[u8]) -> bool;
 }
 
-pub trait EqBytes: PartialEqBytes + Eq {}
-
 pub trait HashBytes: Hash {
     #[dync_trait_method]
     fn hash<H: Hasher>(&self, state: &mut H);
@@ -83,8 +81,6 @@ impl<T: PartialEq + 'static> PartialEqBytes for T {
         a.eq(b)
     }
 }
-
-impl<T: PartialEqBytes + Eq> EqBytes for T {}
 
 impl<T: Hash + 'static> HashBytes for T {
     #[inline]

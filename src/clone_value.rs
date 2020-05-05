@@ -7,15 +7,12 @@
 
 use std::any::TypeId;
 use std::mem::ManuallyDrop;
-use std::rc::Rc;
-use std::sync::Arc;
 
 use crate::bytes::*;
 use crate::traits::*;
 use crate::value::GetBytesRef;
 use crate::vec_clone::Elem as CloneElem;
 
-#[derive(Debug)]
 pub struct BoxValue {
     pub(crate) bytes: ManuallyDrop<Box<[u8]>>,
     pub(crate) type_id: TypeId,
@@ -26,7 +23,7 @@ pub struct BoxValue {
 impl Clone for BoxValue {
     fn clone(&self) -> BoxValue {
         BoxValue {
-            bytes: ManuallyDrop::new(unsafe { self.clone_fn.0(self.bytes.as_ref()) }),
+            bytes: ManuallyDrop::new(unsafe { (self.clone_fn)(self.bytes.as_ref()) }),
             type_id: self.type_id,
             clone_fn: self.clone_fn,
             drop_fn: self.drop_fn,
@@ -37,7 +34,7 @@ impl Clone for BoxValue {
 impl Drop for BoxValue {
     fn drop(&mut self) {
         unsafe {
-            self.drop_fn.0(&mut *self.bytes);
+            (self.drop_fn)(&mut *self.bytes);
         }
     }
 }
@@ -114,7 +111,6 @@ impl<'a> CloneValueRef<'a> {
 }
 
 /// A generic mutable value reference into a buffer.
-#[derive(Debug)]
 pub struct CloneValueMut<'a> {
     pub(crate) bytes: &'a mut [u8],
     pub(crate) type_id: TypeId,
@@ -130,7 +126,7 @@ impl<'a> CloneValueMut<'a> {
         CloneValueMut {
             bytes: typed.as_bytes_mut(),
             type_id: TypeId::of::<T>(),
-            clone_from_fn: CloneFromFn(T::clone_from_bytes),
+            clone_from_fn: T::clone_from_bytes,
         }
     }
 
@@ -148,7 +144,7 @@ impl<'a> CloneValueMut<'a> {
         CloneValueMut {
             bytes,
             type_id,
-            clone_from_fn: CloneFromFn(clone_from_fn),
+            clone_from_fn,
         }
     }
 
@@ -171,7 +167,7 @@ impl<'a> CloneValueMut<'a> {
                 // We are cloning other.bytes into self.bytes.
                 // This function will call the appropriate typed clone_from function, which will
                 // drop the previous value of self.bytes.
-                self.clone_from_fn.0(&mut self.bytes, other.bytes);
+                (self.clone_from_fn)(&mut self.bytes, other.bytes);
             }
         }
     }

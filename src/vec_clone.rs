@@ -13,7 +13,6 @@ pub trait Elem: Any + CloneBytes + DropBytes {}
 impl<T> Elem for T where T: Any + CloneBytes + DropBytes {}
 
 /// This container is a WIP, not to be used in production.
-#[derive(Debug, PartialEq, Hash)]
 pub struct VecClone {
     data: ManuallyDrop<VecCopy>,
     clone_fn: CloneFn,
@@ -28,7 +27,7 @@ impl Clone for VecClone {
             self.data
                 .byte_chunks()
                 .zip(new_data.chunks_exact_mut(self.data.element_size()))
-                .for_each(|(src, dst)| unsafe { self.clone_from_fn.0(dst, src) });
+                .for_each(|(src, dst)| unsafe { (self.clone_from_fn)(dst, src) });
             new_data
         };
         VecClone {
@@ -44,7 +43,7 @@ impl Drop for VecClone {
     fn drop(&mut self) {
         unsafe {
             for elem_bytes in self.data.byte_chunks_mut() {
-                self.drop_fn.0(elem_bytes);
+                (self.drop_fn)(elem_bytes);
             }
         }
     }
@@ -149,7 +148,7 @@ impl VecClone {
             // Drop trailing elements manually.
             unsafe {
                 for bytes in self.data.byte_chunks_mut().skip(new_len) {
-                    self.drop_fn.0(bytes);
+                    (self.drop_fn)(bytes);
                 }
             }
             // Truncate data
@@ -164,7 +163,7 @@ impl VecClone {
         // Drop all elements manually.
         unsafe {
             for bytes in self.data.byte_chunks_mut() {
-                self.drop_fn.0(bytes);
+                (self.drop_fn)(bytes);
             }
         }
         self.data.data.clear();
@@ -399,7 +398,7 @@ impl VecClone {
         } = self;
         let type_id = data.element_type_id();
         // Safety is guaranteed here by the value API.
-        unsafe { CloneValueMut::from_raw_parts(data.get_bytes_mut(i), type_id, clone_from_fn.0) }
+        unsafe { CloneValueMut::from_raw_parts(data.get_bytes_mut(i), type_id, *clone_from_fn) }
     }
 
     /// Return an iterator over untyped value references stored in this buffer.
@@ -473,7 +472,7 @@ impl VecClone {
         } = &mut **data;
         data.chunks_exact_mut(*element_size)
             .map(move |bytes| unsafe {
-                CloneValueMut::from_raw_parts(bytes, *element_type_id, clone_from_fn.0)
+                CloneValueMut::from_raw_parts(bytes, *element_type_id, clone_from_fn)
             })
     }
 }
