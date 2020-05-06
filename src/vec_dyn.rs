@@ -712,7 +712,7 @@ mod tests {
     #[test]
     fn downcast_value_mut() {
         use std::time::Instant;
-        let size = 9_000_000;
+        let size = 90_000;
         let mut v: VecDynAll = make_random_vec_dyn(size);
         let start = Instant::now();
         vec_dyn_compute(&mut v);

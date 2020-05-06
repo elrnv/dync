@@ -353,9 +353,7 @@ pub trait VTable<T> {
 
 impl<T: Copy> VTable<T> for () {
     #[inline]
-    fn build_vtable() -> Self {
-        ()
-    }
+    fn build_vtable() -> Self {}
 }
 
 impl<T: DropBytes, V: VTable<T>> VTable<T> for (DropFn, V) {
@@ -554,7 +552,7 @@ impl<'a, V> ValueRef<'a, V> {
     }
 
     #[inline]
-    pub fn into_base<U: From<V>>(&self) -> ValueRef<U>
+    pub fn as_base<U: From<V>>(&self) -> ValueRef<U>
     where
         V: Clone,
     {

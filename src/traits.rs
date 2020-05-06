@@ -11,6 +11,7 @@ use std::hash::{Hash, Hasher};
 use std::mem::ManuallyDrop;
 
 pub trait DropBytes {
+    #[doc(hidden)]
     unsafe fn drop_bytes(bytes: &mut [u8]);
 }
 
@@ -22,7 +23,7 @@ pub trait CloneBytes: Clone {
     fn clone_from(&mut self, src: &Self);
     //unsafe fn clone_from_bytes(dst: &mut [u8], src: &[u8]);
 
-    /// Clone without dropping the destination bytes.
+    #[doc(hidden)]
     unsafe fn clone_into_raw_bytes(src: &[u8], dst: &mut [u8]);
 }
 
