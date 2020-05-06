@@ -3,14 +3,11 @@ use std::any::Any;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::prelude::*;
 
-#[cfg(feature = "testing")]
-use data_buffer::vec_clone::VecClone;
-use data_buffer::{VecCopy, VecDyn};
-use dyn_derive::dyn_trait;
+use dync::{dync_trait, VecCopy, VecDyn};
 
 static SEED: [u8; 32] = [3; 32];
 
-#[dyn_trait(suffix = "VTable", dyn_crate_name = "data_buffer")]
+#[dync_trait]
 pub trait DynClone {}
 impl DynClone for [i64; 3] {}
 
@@ -33,14 +30,6 @@ fn make_random_vec_any(n: usize) -> Vec<Box<dyn Any>> {
 
 #[inline]
 fn make_random_vec_copy(n: usize) -> VecCopy {
-    let mut rng: StdRng = SeedableRng::from_seed(SEED);
-    let vec: Vec<_> = (0..n).map(move |_| [rng.gen::<i64>(); 3]).collect();
-    vec.into()
-}
-
-#[cfg(feature = "testing")]
-#[inline]
-fn make_random_vec_clone(n: usize) -> VecClone {
     let mut rng: StdRng = SeedableRng::from_seed(SEED);
     let vec: Vec<_> = (0..n).map(move |_| [rng.gen::<i64>(); 3]).collect();
     vec.into()
@@ -84,20 +73,8 @@ fn vec_any_compute(v: &mut Vec<Box<dyn Any>>) {
 }
 
 #[inline]
-fn vec_copy_compute(v: &mut VecCopy) {
-    for a in v.iter_value_mut() {
-        let a = a.downcast::<[i64; 3]>().unwrap();
-        let res = compute(a[0], a[1], a[2]);
-        a[0] = res[0];
-        a[1] = res[1];
-        a[2] = res[2];
-    }
-}
-
-#[cfg(feature = "testing")]
-#[inline]
-fn vec_clone_compute(v: &mut VecClone) {
-    for a in v.iter_value_mut() {
+fn vec_copy_compute<V>(v: &mut VecCopy<V>) {
+    for a in v.iter_mut() {
         let a = a.downcast::<[i64; 3]>().unwrap();
         let res = compute(a[0], a[1], a[2]);
         a[0] = res[0];
@@ -107,7 +84,7 @@ fn vec_clone_compute(v: &mut VecClone) {
 }
 
 #[inline]
-fn vec_dyn_compute<V>(v: &mut VecDyn<V>) {
+fn vec_dyn_compute<V: Clone>(v: &mut VecDyn<V>) {
     for a in v.iter_mut() {
         let a = a.downcast::<[i64; 3]>().unwrap();
         let res = compute(a[0], a[1], a[2]);
@@ -139,14 +116,6 @@ fn type_erasure(c: &mut Criterion) {
             let mut v = make_random_vec_copy(buf_size);
             b.iter(|| {
                 vec_copy_compute(&mut v);
-            })
-        });
-
-        #[cfg(feature = "testing")]
-        group.bench_function(BenchmarkId::new("VecClone", buf_size), |b| {
-            let mut v = make_random_vec_clone(buf_size);
-            b.iter(|| {
-                vec_clone_compute(&mut v);
             })
         });
 

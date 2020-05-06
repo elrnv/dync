@@ -16,7 +16,7 @@
 /// impl fmt::Display for MyBuffer {
 ///     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 ///         unsafe fn display_buf<T: Copy + Any + fmt::Display>(buf: &VecCopy, f: &mut fmt::Formatter) {
-///             for item in buf.iter::<T>().unwrap() {
+///             for item in buf.iter_as::<T>().unwrap() {
 ///                 write!(f, "{} ", item)
 ///                     .expect("Error occurred while writing MyBuffer.");
 ///             }

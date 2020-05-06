@@ -49,8 +49,8 @@ fn main() {
             // Generate a random seed.
             let seed = rng.gen::<u8>();
 
-            int_values.push(costly_computation_int(seed));
-            str_values.push(costly_computation_str(seed));
+            int_values.push_as(costly_computation_int(seed));
+            str_values.push_as(costly_computation_str(seed));
         }
         println!(
             "non cached loop: {} milliseconds",

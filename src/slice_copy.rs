@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::value::*;
-use crate::Elem;
+use crate::CopyElem;
 
 /*
  * Immutable slice
@@ -27,27 +27,27 @@ pub struct SliceCopy<'a, V = ()> {
 }
 
 impl<'a, V> SliceCopy<'a, V> {
-    pub unsafe fn from_raw_parts(
+    pub(crate) unsafe fn from_raw_parts(
         data: &'a [u8],
         element_size: usize,
         element_type_id: TypeId,
-        vtable: &'a V,
+        vtable: impl Into<VTableRef<'a, V>>,
     ) -> Self {
         SliceCopy {
             data,
             element_size,
             element_type_id,
-            vtable: VTableRef::Ref(vtable),
+            vtable: vtable.into(),
         }
     }
 
     /// Construct a `SliceCopy` from a given typed slice by reusing the provided memory.
     #[inline]
-    pub fn from_slice<T: Elem>(slice: &[T]) -> Self
+    pub fn from_slice<T: CopyElem>(slice: &[T]) -> Self
     where
         V: VTable<T>,
     {
-        // This is safe since `Elem` is `Copy`.
+        // This is safe since `CopyElem` is `Copy`.
         unsafe { Self::from_slice_non_copy(slice) }
     }
 
@@ -65,7 +65,7 @@ impl<'a, V> SliceCopy<'a, V> {
             ),
             element_size,
             element_type_id: TypeId::of::<T>(),
-            vtable: VTableRef::Owned(Box::new(V::build_vtable())),
+            vtable: VTableRef::Box(Box::new(V::build_vtable())),
         }
     }
 
@@ -130,7 +130,10 @@ impl<'a, V> SliceCopy<'a, V> {
     /// Append copied items from this buffer to a given `Vec<T>`. Return the mutable reference
     /// `Some(vec)` if type matched the internal type and `None` otherwise.
     #[inline]
-    pub fn append_copy_to_vec<'b, T: Elem>(&self, vec: &'b mut Vec<T>) -> Option<&'b mut Vec<T>> {
+    pub fn append_copy_to_vec<'b, T: CopyElem>(
+        &self,
+        vec: &'b mut Vec<T>,
+    ) -> Option<&'b mut Vec<T>> {
         let iter = self.iter_as()?;
         vec.extend(iter);
         Some(vec)
@@ -138,7 +141,7 @@ impl<'a, V> SliceCopy<'a, V> {
 
     /// Copies contents of `self` into the given `Vec`.
     #[inline]
-    pub fn copy_into_vec<T: Elem>(&self) -> Option<Vec<T>> {
+    pub fn copy_into_vec<T: CopyElem>(&self) -> Option<Vec<T>> {
         let mut vec = Vec::new();
         match self.append_copy_to_vec(&mut vec) {
             Some(_) => Some(vec),
@@ -157,7 +160,7 @@ impl<'a, V> SliceCopy<'a, V> {
 
     /// Get `i`'th element of the buffer.
     #[inline]
-    pub fn get<T: Elem>(&self, i: usize) -> Option<&T> {
+    pub fn get_as<T: CopyElem>(&self, i: usize) -> Option<&T> {
         assert!(i < self.len());
         let ptr = self.check::<T>()?.data.as_ptr() as *const T;
         Some(unsafe { &*ptr.add(i) })
@@ -169,11 +172,17 @@ impl<'a, V> SliceCopy<'a, V> {
 
     /// Get a reference to a value stored in this container at index `i`.
     #[inline]
-    pub fn value(&self, i: usize) -> CopyValueRef {
+    pub fn get(&self, i: usize) -> CopyValueRef<V> {
         debug_assert!(i < self.len());
         // This call is safe since our buffer guarantees that the given bytes have the
         // corresponding TypeId.
-        unsafe { CopyValueRef::from_raw_parts(self.get_bytes(i), self.element_type_id()) }
+        unsafe {
+            CopyValueRef::from_raw_parts(
+                self.get_bytes(i),
+                self.element_type_id(),
+                self.vtable.as_ref(),
+            )
+        }
     }
 
     /// Return an iterator over untyped value references stored in this buffer.
@@ -192,10 +201,26 @@ impl<'a, V> SliceCopy<'a, V> {
     /// }
     /// ```
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = CopyValueRef> {
+    pub fn iter(&self) -> impl Iterator<Item = CopyValueRef<V>> {
         self.byte_chunks().map(move |bytes| unsafe {
-            CopyValueRef::from_raw_parts(bytes, self.element_type_id())
+            CopyValueRef::from_raw_parts(bytes, self.element_type_id(), self.vtable.as_ref())
         })
+    }
+
+    pub fn split_at(&self, mid: usize) -> (SliceCopy<V>, SliceCopy<V>) {
+        let &SliceCopy {
+            ref data,
+            element_size,
+            element_type_id,
+            ref vtable,
+        } = self;
+        unsafe {
+            let (l, r) = data.split_at(mid * element_size);
+            (
+                SliceCopy::from_raw_parts(l, element_size, element_type_id, vtable.as_ref()),
+                SliceCopy::from_raw_parts(r, element_size, element_type_id, vtable.as_ref()),
+            )
+        }
     }
 
     /*
@@ -221,7 +246,7 @@ impl<'a, V> SliceCopy<'a, V> {
 /// Convert a `&[T]` to a `SliceCopy`.
 impl<'a, T, V> From<&'a [T]> for SliceCopy<'a, V>
 where
-    T: Elem,
+    T: CopyElem,
     V: VTable<T>,
 {
     #[inline]
@@ -248,27 +273,27 @@ pub struct SliceCopyMut<'a, V = ()> {
 }
 
 impl<'a, V> SliceCopyMut<'a, V> {
-    pub unsafe fn from_raw_parts(
+    pub(crate) unsafe fn from_raw_parts(
         data: &'a mut [u8],
         element_size: usize,
         element_type_id: TypeId,
-        vtable: &'a V,
+        vtable: impl Into<VTableRef<'a, V>>,
     ) -> SliceCopyMut<'a, V> {
         SliceCopyMut {
             data,
             element_size,
             element_type_id,
-            vtable: VTableRef::Ref(vtable),
+            vtable: vtable.into(),
         }
     }
 
     /// Construct a `SliceCopyMut` from a given typed slice by reusing the provided memory.
     #[inline]
-    pub fn from_slice<T: Elem>(slice: &'a mut [T]) -> SliceCopyMut<'a, V>
+    pub fn from_slice<T: CopyElem>(slice: &'a mut [T]) -> SliceCopyMut<'a, V>
     where
         V: VTable<T>,
     {
-        // This is safe since `Elem` is `Copy`.
+        // This is safe since `CopyElem` is `Copy`.
         unsafe { Self::from_slice_non_copy(slice) }
     }
 
@@ -286,7 +311,7 @@ impl<'a, V> SliceCopyMut<'a, V> {
             ),
             element_size,
             element_type_id: TypeId::of::<T>(),
-            vtable: VTableRef::Owned(Box::new(V::build_vtable())),
+            vtable: VTableRef::Box(Box::new(V::build_vtable())),
         }
     }
 
@@ -296,7 +321,7 @@ impl<'a, V> SliceCopyMut<'a, V> {
     ///
     /// This function will panic if the given slice has as different size than current.
     #[inline]
-    pub fn copy_from_slice<T: Elem>(&mut self, slice: &[T]) -> Option<&mut Self> {
+    pub fn copy_from_slice<T: CopyElem>(&mut self, slice: &[T]) -> Option<&mut Self> {
         let this_slice = self.as_slice::<T>()?;
         this_slice.copy_from_slice(slice);
         Some(self)
@@ -362,7 +387,10 @@ impl<'a, V> SliceCopyMut<'a, V> {
     /// Append copied items from this buffer to a given `Vec<T>`. Return the mutable reference
     /// `Some(vec)` if type matched the internal type and `None` otherwise.
     #[inline]
-    pub fn append_copy_to_vec<'b, T: Elem>(&self, vec: &'b mut Vec<T>) -> Option<&'b mut Vec<T>> {
+    pub fn append_copy_to_vec<'b, T: CopyElem>(
+        &self,
+        vec: &'b mut Vec<T>,
+    ) -> Option<&'b mut Vec<T>> {
         let slice = SliceCopy::from(self);
         vec.extend(slice.iter_as()?);
         Some(vec)
@@ -370,7 +398,7 @@ impl<'a, V> SliceCopyMut<'a, V> {
 
     /// Copies contents of `self` into the given `Vec`.
     #[inline]
-    pub fn copy_into_vec<T: Elem>(self) -> Option<Vec<T>> {
+    pub fn copy_into_vec<T: CopyElem>(self) -> Option<Vec<T>> {
         let mut vec = Vec::new();
         match self.append_copy_to_vec(&mut vec) {
             Some(_) => Some(vec),
@@ -389,7 +417,7 @@ impl<'a, V> SliceCopyMut<'a, V> {
 
     /// Get `i`'th element of the buffer.
     #[inline]
-    pub fn get<T: Elem>(&mut self, i: usize) -> Option<&mut T> {
+    pub fn get_as<T: CopyElem>(&mut self, i: usize) -> Option<&mut T> {
         assert!(i < self.len());
         let ptr = self.check::<T>()?.data.as_mut_ptr() as *mut T;
         Some(unsafe { &mut *ptr.add(i) })
@@ -437,7 +465,7 @@ impl<'a, V> SliceCopyMut<'a, V> {
 
     /// Get a reference to a value stored in this container at index `i`.
     #[inline]
-    pub fn value(&mut self, i: usize) -> CopyValueMut {
+    pub fn get(&mut self, i: usize) -> CopyValueMut<V> {
         debug_assert!(i < self.len());
         let element_size = self.element_size();
         let element_type_id = self.element_type_id();
@@ -446,34 +474,53 @@ impl<'a, V> SliceCopyMut<'a, V> {
         // corresponding TypeId.
         unsafe {
             CopyValueMut::from_raw_parts(
-                &mut self.data[i * element_size..(i + 1) * element_size],
+                crate::index_bytes_mut(&mut self.data, element_size, i),
                 element_type_id,
+                self.vtable.as_ref(),
             )
         }
     }
 
     /// Return an iterator over untyped value references stored in this slice.
     ///
-    /// In contrast to `iter`, this function defers downcasting on a per element basis.
+    /// In contrast to `iter_as`, this function defers downcasting on a per element basis.
     /// As a result, this type of iteration is typically less efficient if a typed value is needed
     /// for each element.
     #[inline]
-    pub fn iter(&mut self) -> impl Iterator<Item = CopyValueMut> {
-        let Self {
+    pub fn iter(&mut self) -> impl Iterator<Item = CopyValueMut<V>> {
+        let &mut SliceCopyMut {
             ref mut data,
             element_size,
             element_type_id,
-            ..
-        } = *self;
+            ref vtable,
+        } = self;
         data.chunks_exact_mut(element_size)
-            .map(move |bytes| unsafe { CopyValueMut::from_raw_parts(bytes, element_type_id) })
+            .map(move |bytes| unsafe {
+                CopyValueMut::from_raw_parts(bytes, element_type_id, vtable.as_ref())
+            })
+    }
+
+    pub fn split_at(&mut self, mid: usize) -> (SliceCopyMut<V>, SliceCopyMut<V>) {
+        let &mut SliceCopyMut {
+            ref mut data,
+            element_size,
+            element_type_id,
+            ref vtable,
+        } = self;
+        unsafe {
+            let (l, r) = data.split_at_mut(mid * element_size);
+            (
+                SliceCopyMut::from_raw_parts(l, element_size, element_type_id, vtable.as_ref()),
+                SliceCopyMut::from_raw_parts(r, element_size, element_type_id, vtable.as_ref()),
+            )
+        }
     }
 }
 
 /// Convert a `&mut [T]` to a `SliceCopyMut`.
 impl<'a, T, V> From<&'a mut [T]> for SliceCopyMut<'a, V>
 where
-    T: Elem,
+    T: CopyElem,
     V: VTable<T>,
 {
     #[inline]
