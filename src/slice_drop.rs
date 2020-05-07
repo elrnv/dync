@@ -3,40 +3,55 @@ use std::{
     slice,
 };
 
+use crate::index_slice::*;
 use crate::slice_copy::*;
 use crate::traits::*;
 use crate::value::*;
 use crate::Elem;
+use crate::ElementBytes;
 
 /*
  * Immutable slice
  */
 
 #[derive(Clone)]
-pub struct SliceDyn<'a, V> {
+pub struct SliceDrop<'a, V> {
     pub(crate) data: SliceCopy<'a, (DropFn, V)>,
 }
 
-impl<'a, V> SliceDyn<'a, V> {
+impl<'a, V> SliceDrop<'a, V> {
     pub(crate) unsafe fn from_raw_parts(
         data: &'a [u8],
         element_size: usize,
         element_type_id: TypeId,
         vtable: impl Into<VTableRef<'a, (DropFn, V)>>,
     ) -> Self {
-        SliceDyn {
+        SliceDrop {
             data: SliceCopy::from_raw_parts(data, element_size, element_type_id, vtable),
         }
     }
 
-    /// Construct a `SliceDyn` from a given typed slice by reusing the provided memory.
+    /// Construct a `SliceDrop` from a given typed slice by reusing the provided memory.
     #[inline]
     pub fn from_slice<T: Elem>(slice: &[T]) -> Self
     where
         V: VTable<T>,
     {
-        SliceDyn {
+        SliceDrop {
             data: unsafe { SliceCopy::from_slice_non_copy(slice) },
+        }
+    }
+
+    /// Upcast the `SliceDrop` into a more general base `SliceDrop`.
+    ///
+    /// This function converts the underlying virtual function table into a subset of the existing
+    #[inline]
+    pub fn upcast<U: From<V>>(self) -> SliceDrop<'a, U>
+    where
+        V: Clone,
+    {
+        SliceDrop {
+            data: self.data.upcast_with(|v: (DropFn, V)| (v.0, U::from(v.1))),
         }
     }
 
@@ -85,9 +100,9 @@ impl<'a, V> SliceDyn<'a, V> {
     ///
     /// # Examples
     /// ```
-    /// use dync::SliceDyn;
+    /// use dync::SliceDrop;
     /// let vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
-    /// let buf = SliceDyn::<()>::from_slice(vec.as_slice());
+    /// let buf = SliceDrop::<()>::from_slice(vec.as_slice());
     /// for (i, &val) in buf.iter_as::<f32>().unwrap().enumerate() {
     ///     assert_eq!(val, vec[i]);
     /// }
@@ -118,21 +133,6 @@ impl<'a, V> SliceDyn<'a, V> {
      * Value API. This allows users to manipulate contained data without knowing the element type.
      */
 
-    /// Get a reference to a value stored in this container at index `i`.
-    #[inline]
-    pub fn get(&self, i: usize) -> ValueRef<V> {
-        debug_assert!(i < self.len());
-        // This call is safe since our buffer guarantees that the given bytes have the
-        // corresponding TypeId.
-        unsafe {
-            ValueRef::from_raw_parts(
-                self.get_bytes(i),
-                self.element_type_id(),
-                self.data.vtable.as_ref(),
-            )
-        }
-    }
-
     /// Return an iterator over untyped value references stored in this buffer.
     ///
     /// In contrast to `iter`, this function defers downcasting on a per element basis.
@@ -141,9 +141,9 @@ impl<'a, V> SliceDyn<'a, V> {
     ///
     /// # Examples
     /// ```
-    /// use dync::SliceDyn;
+    /// use dync::SliceDrop;
     /// let vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
-    /// let buf = SliceDyn::<()>::from(vec.as_slice());
+    /// let buf = SliceDrop::<()>::from(vec.as_slice());
     /// for (i, val) in buf.iter().enumerate() {
     ///     assert_eq!(val.downcast::<f32>().unwrap(), &vec[i]);
     /// }
@@ -155,9 +155,17 @@ impl<'a, V> SliceDyn<'a, V> {
         })
     }
 
-    pub fn split_at(&self, mid: usize) -> (SliceDyn<V>, SliceDyn<V>) {
+    #[inline]
+    pub fn chunks_exact(&self, chunk_size: usize) -> impl Iterator<Item = SliceDrop<V>> {
+        self.data
+            .chunks_exact(chunk_size)
+            .map(|data| SliceDrop { data })
+    }
+
+    #[inline]
+    pub fn split_at(&self, mid: usize) -> (SliceDrop<V>, SliceDrop<V>) {
         let (l, r) = self.data.split_at(mid);
-        (SliceDyn { data: l }, SliceDyn { data: r })
+        (SliceDrop { data: l }, SliceDrop { data: r })
     }
 
     /*
@@ -166,12 +174,12 @@ impl<'a, V> SliceDyn<'a, V> {
 
     /// Get a `const` reference to the byte slice of the `i`'th element of the buffer.
     #[inline]
-    pub(crate) fn get_bytes(&self, i: usize) -> &[u8] {
-        self.data.get_bytes(i)
+    pub(crate) fn index_byte_slice(&self, i: usize) -> &[u8] {
+        self.data.index_byte_slice(i)
     }
 }
 
-impl<'a, V: HasClone> SliceDyn<'a, V> {
+impl<'a, V: HasClone> SliceDrop<'a, V> {
     /// Append cloned items from this buffer to a given `Vec<T>`. Return the mutable reference
     /// `Some(vec)` if type matched the internal type and `None` otherwise.
     #[inline]
@@ -195,15 +203,46 @@ impl<'a, V: HasClone> SliceDyn<'a, V> {
     }
 }
 
-/// Convert a `&[T]` to a `SliceDyn`.
-impl<'a, T, V> From<&'a [T]> for SliceDyn<'a, V>
+impl<'a, V> IndexSlice<'a, usize> for SliceDrop<'a, V> {
+    type Output = ValueRef<'a, V>;
+
+    /// Get a reference to a value stored in this container at index `i`.
+    #[inline]
+    fn get(&'a self, i: usize) -> ValueRef<'a, V> {
+        debug_assert!(i < self.len());
+        // This call is safe since our buffer guarantees that the given bytes have the
+        // corresponding TypeId.
+        unsafe {
+            ValueRef::from_raw_parts(
+                self.index_byte_slice(i),
+                self.element_type_id(),
+                self.data.vtable.as_ref(),
+            )
+        }
+    }
+}
+
+impl<'a, V, I> IndexSlice<'a, I> for SliceDrop<'a, V>
+where
+    I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+{
+    type Output = SliceDrop<'a, V>;
+    fn get(&'a self, i: I) -> Self::Output {
+        SliceDrop {
+            data: self.data.get(i),
+        }
+    }
+}
+
+/// Convert a `&[T]` to a `SliceDrop`.
+impl<'a, T, V> From<&'a [T]> for SliceDrop<'a, V>
 where
     T: Elem,
     V: VTable<T>,
 {
     #[inline]
-    fn from(s: &'a [T]) -> SliceDyn<'a, V> {
-        SliceDyn::from_slice(s)
+    fn from(s: &'a [T]) -> SliceDrop<'a, V> {
+        SliceDrop::from_slice(s)
     }
 }
 
@@ -211,30 +250,43 @@ where
  * Mutable Slice
  */
 
-pub struct SliceDynMut<'a, V> {
+pub struct SliceDropMut<'a, V> {
     pub(crate) data: SliceCopyMut<'a, (DropFn, V)>,
 }
 
-impl<'a, V> SliceDynMut<'a, V> {
+impl<'a, V> SliceDropMut<'a, V> {
     pub(crate) unsafe fn from_raw_parts(
         data: &'a mut [u8],
         element_size: usize,
         element_type_id: TypeId,
         vtable: impl Into<VTableRef<'a, (DropFn, V)>>,
-    ) -> SliceDynMut<'a, V> {
-        SliceDynMut {
+    ) -> SliceDropMut<'a, V> {
+        SliceDropMut {
             data: SliceCopyMut::from_raw_parts(data, element_size, element_type_id, vtable),
         }
     }
 
-    /// Construct a `SliceDynMut` from a given typed slice by reusing the provided memory.
+    /// Construct a `SliceDropMut` from a given typed slice by reusing the provided memory.
     #[inline]
-    pub fn from_slice<T: Elem>(slice: &'a mut [T]) -> SliceDynMut<'a, V>
+    pub fn from_slice<T: Elem>(slice: &'a mut [T]) -> SliceDropMut<'a, V>
     where
         V: VTable<T>,
     {
-        SliceDynMut {
+        SliceDropMut {
             data: unsafe { SliceCopyMut::from_slice_non_copy(slice) },
+        }
+    }
+
+    /// Upcast the `SliceDropMut` into a more general base `SliceDropMut`.
+    ///
+    /// This function converts the underlying virtual function table into a subset of the existing
+    #[inline]
+    pub fn upcast<U: From<V>>(self) -> SliceDropMut<'a, U>
+    where
+        V: Clone,
+    {
+        SliceDropMut {
+            data: self.data.upcast_with(|v: (DropFn, V)| (v.0, U::from(v.1))),
         }
     }
 
@@ -247,6 +299,13 @@ impl<'a, V> SliceDynMut<'a, V> {
         } else {
             Some(self)
         }
+    }
+
+    /// Swap the values at the two given indices.
+    #[inline]
+    pub fn swap(&mut self, i: usize, j: usize) {
+        // We don't need to worry about drops or clones here.
+        self.data.swap(i, j);
     }
 
     /*
@@ -282,9 +341,9 @@ impl<'a, V> SliceDynMut<'a, V> {
     ///
     /// # Examples
     /// ```
-    /// use dync::SliceDynMut;
+    /// use dync::SliceDropMut;
     /// let mut vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
-    /// let mut buf = SliceDynMut::<()>::from(vec.as_mut_slice());
+    /// let mut buf = SliceDropMut::<()>::from(vec.as_mut_slice());
     /// for val in buf.iter_as::<f32>().unwrap() {
     ///     *val += 1.0_f32;
     /// }
@@ -294,7 +353,7 @@ impl<'a, V> SliceDynMut<'a, V> {
         self.as_slice::<T>().map(|x| x.iter_mut())
     }
 
-    /// Convert this `SliceDynMut` into a typed slice.
+    /// Convert this `SliceDropMut` into a typed slice.
     /// Returs `None` if the given type `T` doesn't match the internal.
     #[inline]
     pub fn as_slice<T: Any>(&mut self) -> Option<&mut [T]> {
@@ -320,7 +379,7 @@ impl<'a, V> SliceDynMut<'a, V> {
     /// ```
     /// use dync::*;
     /// let mut vec = vec![1u32,2,3,4,5];
-    /// let mut buf = SliceDynMut::<()>::from_slice(vec.as_mut_slice());
+    /// let mut buf = SliceDropMut::<()>::from_slice(vec.as_mut_slice());
     /// buf.rotate_left(3);
     /// assert_eq!(buf.as_slice::<u32>().unwrap(), &[4,5,1,2,3]);
     /// ```
@@ -338,7 +397,7 @@ impl<'a, V> SliceDynMut<'a, V> {
     /// ```
     /// use dync::*;
     /// let mut vec = vec![1u32,2,3,4,5];
-    /// let mut buf = SliceDynMut::<()>::from_slice(vec.as_mut_slice());
+    /// let mut buf = SliceDropMut::<()>::from_slice(vec.as_mut_slice());
     /// buf.rotate_right(3);
     /// assert_eq!(buf.as_slice::<u32>().unwrap(), &[3,4,5,1,2]);
     /// ```
@@ -350,22 +409,6 @@ impl<'a, V> SliceDynMut<'a, V> {
     /*
      * Value API. This allows users to manipulate contained data without knowing the element type.
      */
-
-    /// Get a reference to a value stored in this container at index `i`.
-    #[inline]
-    pub fn get(&mut self, i: usize) -> ValueMut<V> {
-        let CopyValueMut {
-            bytes,
-            type_id,
-            vtable,
-        } = self.data.get(i);
-
-        ValueMut {
-            bytes,
-            type_id,
-            vtable,
-        }
-    }
 
     /// Return an iterator over untyped value references stored in this slice.
     ///
@@ -389,13 +432,28 @@ impl<'a, V> SliceDynMut<'a, V> {
             })
     }
 
-    pub fn split_at(&mut self, mid: usize) -> (SliceDynMut<V>, SliceDynMut<V>) {
+    #[inline]
+    pub fn chunks_exact(&self, chunk_size: usize) -> impl Iterator<Item = SliceDrop<V>> {
+        self.data
+            .chunks_exact(chunk_size)
+            .map(|data| SliceDrop { data })
+    }
+
+    #[inline]
+    pub fn chunks_exact_mut(&mut self, chunk_size: usize) -> impl Iterator<Item = SliceDropMut<V>> {
+        self.data
+            .chunks_exact_mut(chunk_size)
+            .map(|data| SliceDropMut { data })
+    }
+
+    #[inline]
+    pub fn split_at(&mut self, mid: usize) -> (SliceDropMut<V>, SliceDropMut<V>) {
         let (l, r) = self.data.split_at(mid);
-        (SliceDynMut { data: l }, SliceDynMut { data: r })
+        (SliceDropMut { data: l }, SliceDropMut { data: r })
     }
 }
 
-impl<'a, V: HasClone> SliceDynMut<'a, V> {
+impl<'a, V: HasClone> SliceDropMut<'a, V> {
     /// Clone data from a given slice into the current slice.
     ///
     /// # Panics
@@ -415,7 +473,7 @@ impl<'a, V: HasClone> SliceDynMut<'a, V> {
         &self,
         vec: &'b mut Vec<T>,
     ) -> Option<&'b mut Vec<T>> {
-        SliceDyn::from(self).append_clone_to_vec(vec)?;
+        SliceDrop::from(self).append_clone_to_vec(vec)?;
         Some(vec)
     }
 
@@ -430,32 +488,95 @@ impl<'a, V: HasClone> SliceDynMut<'a, V> {
     }
 }
 
-/// Convert a `&mut [T]` to a `SliceDynMut`.
-impl<'a, T, V> From<&'a mut [T]> for SliceDynMut<'a, V>
+impl<'a, V> IndexSlice<'a, usize> for SliceDropMut<'a, V> {
+    type Output = ValueRef<'a, V>;
+
+    /// Get a reference to a value stored in this container at index `i`.
+    #[inline]
+    fn get(&'a self, i: usize) -> ValueRef<'a, V> {
+        debug_assert!(i < self.len());
+        // This call is safe since our buffer guarantees that the given bytes have the
+        // corresponding TypeId.
+        unsafe {
+            ValueRef::from_raw_parts(
+                self.data.index_byte_slice(i),
+                self.element_type_id(),
+                self.data.vtable.as_ref(),
+            )
+        }
+    }
+}
+
+impl<'a, V> IndexSliceMut<'a, usize> for SliceDropMut<'a, V> {
+    type Output = ValueMut<'a, V>;
+
+    /// Get a reference to a value stored in this container at index `i`.
+    #[inline]
+    fn get_mut(&'a mut self, i: usize) -> ValueMut<'a, V> {
+        let CopyValueMut {
+            bytes,
+            type_id,
+            vtable,
+        } = self.data.get_mut(i);
+
+        ValueMut {
+            bytes,
+            type_id,
+            vtable,
+        }
+    }
+}
+
+impl<'a, V, I> IndexSlice<'a, I> for SliceDropMut<'a, V>
+where
+    I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+{
+    type Output = SliceDrop<'a, V>;
+    fn get(&'a self, i: I) -> Self::Output {
+        SliceDrop {
+            data: self.data.get(i),
+        }
+    }
+}
+
+impl<'a, V, I> IndexSliceMut<'a, I> for SliceDropMut<'a, V>
+where
+    I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+{
+    type Output = SliceDropMut<'a, V>;
+    fn get_mut(&'a mut self, i: I) -> Self::Output {
+        SliceDropMut {
+            data: self.data.get_mut(i),
+        }
+    }
+}
+
+/// Convert a `&mut [T]` to a `SliceDropMut`.
+impl<'a, T, V> From<&'a mut [T]> for SliceDropMut<'a, V>
 where
     T: Elem,
     V: VTable<T>,
 {
     #[inline]
-    fn from(s: &'a mut [T]) -> SliceDynMut<'a, V> {
-        SliceDynMut::from_slice(s)
+    fn from(s: &'a mut [T]) -> SliceDropMut<'a, V> {
+        SliceDropMut::from_slice(s)
     }
 }
 
-impl<'a, V> From<SliceDynMut<'a, V>> for SliceDyn<'a, V> {
+impl<'a, V> From<SliceDropMut<'a, V>> for SliceDrop<'a, V> {
     #[inline]
-    fn from(s: SliceDynMut<'a, V>) -> SliceDyn<'a, V> {
-        SliceDyn {
+    fn from(s: SliceDropMut<'a, V>) -> SliceDrop<'a, V> {
+        SliceDrop {
             data: SliceCopy::from(s.data),
         }
     }
 }
 
-impl<'b, 'a: 'b, V> From<&'b SliceDynMut<'a, V>> for SliceDyn<'b, V> {
+impl<'b, 'a: 'b, V> From<&'b SliceDropMut<'a, V>> for SliceDrop<'b, V> {
     #[inline]
-    fn from(s: &'b SliceDynMut<'a, V>) -> SliceDyn<'b, V> {
+    fn from(s: &'b SliceDropMut<'a, V>) -> SliceDrop<'b, V> {
         unsafe {
-            SliceDyn::from_raw_parts(
+            SliceDrop::from_raw_parts(
                 s.data.data,
                 s.data.element_size,
                 s.data.element_type_id,

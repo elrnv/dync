@@ -25,7 +25,7 @@ type MyValBase = BoxValue<ValBaseVTable>;
 
 fn main() {
     let v = MyVal::new(Rc::new(32i32));
-    let u: MyValBase = v.into_base();
+    let u: MyValBase = v.upcast();
     let w = u.clone();
     println!("w is {:?}", &w);
     let w = w.downcast::<Rc<i32>>().unwrap();

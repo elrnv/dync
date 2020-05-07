@@ -275,7 +275,7 @@ impl<V> BoxValue<V> {
     }
 
     #[inline]
-    pub fn into_base<U: From<V>>(self) -> BoxValue<U>
+    pub fn upcast<U: From<V>>(self) -> BoxValue<U>
     where
         V: Clone,
     {
@@ -401,15 +401,18 @@ impl<V> Value<usize, V> {
 /// Note we always need Drop because it's possible to clone ValueRef's contents, which need to know
 /// how to drop themselves.
 #[derive(Clone, Debug)]
-pub(crate) enum VTableRef<'a, V> {
+pub(crate) enum VTableRef<'a, V>
+where
+    V: ?Sized,
+{
     Ref(&'a V),
     Rc(Rc<V>),
     Box(Box<V>),
 }
 
-impl<'a, V: Clone> VTableRef<'a, V> {
+impl<'a, V: Clone + ?Sized> VTableRef<'a, V> {
     #[inline]
-    fn take(self) -> V {
+    pub fn take(self) -> V {
         match self {
             VTableRef::Ref(v) => v.clone(),
             VTableRef::Box(v) => *v,
@@ -418,7 +421,7 @@ impl<'a, V: Clone> VTableRef<'a, V> {
     }
 }
 
-impl<'a, V> std::ops::Deref for VTableRef<'a, V> {
+impl<'a, V: ?Sized> std::ops::Deref for VTableRef<'a, V> {
     type Target = V;
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -426,28 +429,28 @@ impl<'a, V> std::ops::Deref for VTableRef<'a, V> {
     }
 }
 
-impl<'a, V> From<&'a V> for VTableRef<'a, V> {
+impl<'a, V: ?Sized> From<&'a V> for VTableRef<'a, V> {
     #[inline]
     fn from(v: &'a V) -> VTableRef<'a, V> {
         VTableRef::Ref(v)
     }
 }
 
-impl<'a, V> From<Box<V>> for VTableRef<'a, V> {
+impl<'a, V: ?Sized> From<Box<V>> for VTableRef<'a, V> {
     #[inline]
     fn from(v: Box<V>) -> VTableRef<'a, V> {
         VTableRef::Box(v)
     }
 }
 
-impl<'a, V> From<Rc<V>> for VTableRef<'a, V> {
+impl<'a, V: ?Sized> From<Rc<V>> for VTableRef<'a, V> {
     #[inline]
     fn from(v: Rc<V>) -> VTableRef<'a, V> {
         VTableRef::Rc(v)
     }
 }
 
-impl<'a, V> AsRef<V> for VTableRef<'a, V> {
+impl<'a, V: ?Sized> AsRef<V> for VTableRef<'a, V> {
     #[inline]
     fn as_ref(&self) -> &V {
         match self {
@@ -552,7 +555,7 @@ impl<'a, V> ValueRef<'a, V> {
     }
 
     #[inline]
-    pub fn as_base<U: From<V>>(&self) -> ValueRef<U>
+    pub fn upcast<U: From<V>>(&self) -> ValueRef<U>
     where
         V: Clone,
     {
@@ -618,7 +621,7 @@ impl<'a, V> ValueMut<'a, V> {
     ///
     /// This function will call `drop` on any values stored in `self`.
     #[inline]
-    pub fn clone_from<'b>(&mut self, other: impl Into<ValueRef<'b, V>>)
+    pub fn clone_from_other<'b>(&mut self, other: impl Into<ValueRef<'b, V>>)
     where
         V: HasClone + 'b,
     {
@@ -659,26 +662,32 @@ impl<'a, V> ValueMut<'a, V> {
         self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes_mut(b.bytes) })
     }
 
-    //pub fn into_base<U: From<V>>(self) -> ValueMut<'a, U> {
-    //    ValueMut {
-    //        bytes: self.bytes,
-    //        type_id: self.type_id,
-    //        vtable: VTableRef::Box(Box::new((self.vtable.as_ref().0, U::from(&self.vtable.as_ref().1)))),
-    //    }
-    //}
+    #[inline]
+    pub fn upcast<U: From<V>>(&mut self) -> ValueMut<U>
+    where
+        V: Clone,
+    {
+        let vtable = self.vtable.as_ref();
+        ValueMut {
+            bytes: self.bytes,
+            type_id: self.type_id,
+            vtable: VTableRef::Box(Box::new((vtable.0, U::from(vtable.1.clone())))),
+        }
+    }
 }
 
 /// A generic value reference to a `Copy` type.
 #[derive(Clone, Debug)]
-pub struct CopyValueRef<'a, V = ()> {
+pub struct CopyValueRef<'a, V = ()>
+where
+    V: ?Sized,
+{
     pub(crate) bytes: &'a [u8],
     pub(crate) type_id: TypeId,
     pub(crate) vtable: VTableRef<'a, V>,
 }
 
 impl<'a, V> CopyValueRef<'a, V> {
-    impl_value_base!();
-
     /// Create a new `CopyValueRef` from a typed reference.
     #[inline]
     pub fn new<T: Elem>(typed: &'a T) -> CopyValueRef<'a, V>
@@ -691,6 +700,10 @@ impl<'a, V> CopyValueRef<'a, V> {
             vtable: VTableRef::Box(Box::new(V::build_vtable())),
         }
     }
+}
+
+impl<'a, V: ?Sized> CopyValueRef<'a, V> {
+    impl_value_base!();
 
     /// Create a new `CopyValueref` from a slice of bytes and an associated `TypeId`.
     ///
@@ -716,19 +729,33 @@ impl<'a, V> CopyValueRef<'a, V> {
         // This is safe since we check that self.bytes represent a `T`.
         self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes(b.bytes) })
     }
+
+    #[inline]
+    pub fn upcast<U: From<V>>(&self) -> CopyValueRef<U>
+    where
+        V: Clone,
+    {
+        let vtable = self.vtable.as_ref();
+        CopyValueRef {
+            bytes: self.bytes,
+            type_id: self.type_id,
+            vtable: VTableRef::Box(Box::new(U::from(vtable.clone()))),
+        }
+    }
 }
 
 /// A generic mutable `Copy` value reference.
 #[derive(Debug)]
-pub struct CopyValueMut<'a, V = ()> {
+pub struct CopyValueMut<'a, V = ()>
+where
+    V: ?Sized,
+{
     pub(crate) bytes: &'a mut [u8],
     pub(crate) type_id: TypeId,
     pub(crate) vtable: VTableRef<'a, V>,
 }
 
 impl<'a, V> CopyValueMut<'a, V> {
-    impl_value_base!();
-
     /// Create a new `CopyValueMut` from a typed mutable reference.
     #[inline]
     pub fn new<T: Elem>(typed: &'a mut T) -> CopyValueMut<'a, V>
@@ -741,6 +768,10 @@ impl<'a, V> CopyValueMut<'a, V> {
             vtable: VTableRef::Box(Box::new(V::build_vtable())),
         }
     }
+}
+
+impl<'a, V: ?Sized> CopyValueMut<'a, V> {
+    impl_value_base!();
 
     /// Create a new `CopyValueMut` from a slice of bytes and an associated `TypeId`.
     ///
@@ -787,6 +818,19 @@ impl<'a, V> CopyValueMut<'a, V> {
     pub fn downcast<T: Elem>(self) -> Option<&'a mut T> {
         // This is safe since we check that self.bytes represent a `T`.
         self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes_mut(b.bytes) })
+    }
+
+    #[inline]
+    pub fn upcast<U: From<V>>(&mut self) -> CopyValueMut<U>
+    where
+        V: Clone,
+    {
+        let vtable = self.vtable.as_ref();
+        CopyValueMut {
+            bytes: self.bytes,
+            type_id: self.type_id,
+            vtable: VTableRef::Box(Box::new(U::from(vtable.clone()))),
+        }
     }
 }
 

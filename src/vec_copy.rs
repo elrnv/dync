@@ -28,6 +28,7 @@ use num_traits::{cast, NumCast, Zero};
 use crate::bytes::Bytes;
 use crate::slice_copy::*;
 use crate::value::*;
+use crate::{ElementBytes, ElementBytesMut};
 
 pub trait CopyElem: Any + Copy {}
 impl<T> CopyElem for T where T: Any + Copy {}
@@ -52,7 +53,10 @@ impl<T> CopyElem for T where T: Any + Copy {}
 /// [`bytemuck`]: https://crates.io/crates/bytemuck
 /// [`zerocopy`]: https://crates.io/crates/zerocopy
 #[derive(Clone, Debug, PartialEq, Hash)]
-pub struct VecCopy<V = ()> {
+pub struct VecCopy<V = ()>
+where
+    V: ?Sized,
+{
     /// Raw data stored as bytes.
     pub(crate) data: Vec<u8>,
     /// Number of bytes occupied by an element of this buffer.
@@ -215,6 +219,33 @@ impl<V> VecCopy<V> {
         vec.extend_from_slice(slice);
         Self::from_vec_non_copy(vec)
     }
+}
+
+impl<V: ?Sized> VecCopy<V> {
+    /// Upcast the `VecCopy` into a more general base `VecCopy`.
+    ///
+    /// This function converts the underlying virtual function table into a subset of the existing
+    #[inline]
+    pub fn upcast<U: From<V>>(self) -> VecCopy<U>
+    where
+        V: Clone,
+    {
+        self.upcast_with(U::from)
+    }
+
+    // Helper for upcasts
+    #[inline]
+    pub fn upcast_with<U>(self, f: impl FnOnce(V) -> U) -> VecCopy<U>
+    where
+        V: Clone,
+    {
+        VecCopy {
+            data: self.data,
+            element_size: self.element_size,
+            element_type_id: self.element_type_id,
+            vtable: Rc::new(f((*self.vtable).clone())),
+        }
+    }
 
     /// Resizes the buffer in-place to store `new_len` elements and returns an optional
     /// mutable reference to `Self`.
@@ -357,12 +388,6 @@ impl<V> VecCopy<V> {
     #[inline]
     pub fn byte_capacity(&self) -> usize {
         self.data.capacity()
-    }
-
-    /// Get the size of the element type in bytes.
-    #[inline]
-    pub fn element_size(&self) -> usize {
-        self.element_size
     }
 
     /// Return an iterator to a slice representing typed data.
@@ -532,10 +557,13 @@ impl<V> VecCopy<V> {
     pub fn get_mut(&mut self, i: usize) -> CopyValueMut<V> {
         debug_assert!(i < self.len());
         let type_id = self.element_type_id();
-        let element_size = self.element_size();
+        let element_bytes = self.index_byte_range(i);
         unsafe {
-            let bytes = index_bytes_mut(&mut self.data, element_size, i);
-            CopyValueMut::from_raw_parts(bytes, type_id, self.vtable.as_ref())
+            CopyValueMut::from_raw_parts(
+                &mut self.data[element_bytes],
+                type_id,
+                self.vtable.as_ref(),
+            )
         }
     }
 
@@ -594,14 +622,18 @@ impl<V> VecCopy<V> {
 
     /// Push a value to this `VecCopy` by reference and return a mutable reference to `Self`.
     ///
-    /// If the type of the value doesn't match the internal element type.
+    /// If the type of the value doesn't match the internal element type, return `None`.
+    ///
+    /// Note that it is not necessary for vtables of the value and this vector to match. IF the
+    /// types coincide, we know that either of the vtables is valid, so we just stick with the one
+    /// we already have in the container.
     ///
     /// # Panics
     ///
     /// This function panics if the size of the given value doesn't match the size of the stored
     /// value.
     #[inline]
-    pub fn push(&mut self, value: CopyValueRef) -> Option<&mut Self> {
+    pub fn push<U>(&mut self, value: CopyValueRef<U>) -> Option<&mut Self> {
         assert_eq!(value.size(), self.element_size());
         if value.value_type_id() == self.element_type_id() {
             self.data.extend_from_slice(value.bytes);
@@ -670,9 +702,9 @@ impl<V> VecCopy<V> {
     }
 }
 
-impl<'a> std::iter::FromIterator<CopyValueRef<'a>> for VecCopy<()> {
+impl<'a, V: Clone + ?Sized + 'a> std::iter::FromIterator<CopyValueRef<'a, V>> for VecCopy<V> {
     #[inline]
-    fn from_iter<T: IntoIterator<Item = CopyValueRef<'a>>>(iter: T) -> Self {
+    fn from_iter<T: IntoIterator<Item = CopyValueRef<'a, V>>>(iter: T) -> Self {
         let mut iter = iter.into_iter();
         let next = iter
             .next()
@@ -683,16 +715,16 @@ impl<'a> std::iter::FromIterator<CopyValueRef<'a>> for VecCopy<()> {
             data,
             element_size: next.size(),
             element_type_id: next.value_type_id(),
-            vtable: Rc::new(()),
+            vtable: Rc::new(next.vtable.take()),
         };
         buf.extend(iter);
         buf
     }
 }
 
-impl<'a> Extend<CopyValueRef<'a>> for VecCopy<()> {
+impl<'a, V: ?Sized + 'a> Extend<CopyValueRef<'a, V>> for VecCopy<V> {
     #[inline]
-    fn extend<T: IntoIterator<Item = CopyValueRef<'a>>>(&mut self, iter: T) {
+    fn extend<T: IntoIterator<Item = CopyValueRef<'a, V>>>(&mut self, iter: T) {
         for value in iter {
             assert_eq!(value.size(), self.element_size());
             assert_eq!(value.value_type_id(), self.element_type_id());
@@ -705,7 +737,7 @@ impl<'a> Extend<CopyValueRef<'a>> for VecCopy<()> {
  * Advanced methods to probe buffer internals.
  */
 
-impl<V> VecCopy<V> {
+impl<V: ?Sized> VecCopy<V> {
     /// Clones this `VecCopy` using the given function.
     pub(crate) fn clone_with(&self, clone: impl FnOnce(&[u8]) -> Vec<u8>) -> Self {
         VecCopy {
@@ -787,8 +819,7 @@ impl<V> VecCopy<V> {
     #[inline]
     pub unsafe fn get_bytes_mut(&mut self, i: usize) -> &mut [u8] {
         debug_assert!(i < self.len());
-        let element_size = self.element_size();
-        index_bytes_mut(&mut self.data, element_size, i)
+        self.index_byte_slice_mut(i)
     }
 
     /// Move buffer data to a vector with a given type, reinterpreting the data type as
@@ -954,6 +985,21 @@ impl<V> VecCopy<V> {
     }
 }
 
+impl<V: ?Sized> ElementBytes for VecCopy<V> {
+    fn element_size(&self) -> usize {
+        self.element_size
+    }
+    fn bytes(&self) -> &[u8] {
+        self.data.as_ref()
+    }
+}
+
+impl<V: ?Sized> ElementBytesMut for VecCopy<V> {
+    fn bytes_mut(&mut self) -> &mut [u8] {
+        self.data.as_mut()
+    }
+}
+
 /// Convert a `Vec<T>` to a `VecCopy`.
 impl<T, V> From<Vec<T>> for VecCopy<V>
 where
@@ -979,7 +1025,7 @@ where
 }
 
 /// Convert a `VecCopy` to a `Option<Vec<T>>`.
-impl<T, V> Into<Option<Vec<T>>> for VecCopy<V>
+impl<T, V: ?Sized> Into<Option<Vec<T>>> for VecCopy<V>
 where
     T: CopyElem,
 {
@@ -991,7 +1037,7 @@ where
 
 #[cfg(feature = "numeric")]
 /// Implement pretty printing of numeric `VecCopy` data.
-impl<V> fmt::Display for VecCopy<V> {
+impl<V: ?Sized> fmt::Display for VecCopy<V> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         call_numeric_buffer_fn!( self.reinterpret_display::<_>(f) or {
             println!("Unknown VecCopy type for pretty printing.");
@@ -1000,38 +1046,30 @@ impl<V> fmt::Display for VecCopy<V> {
     }
 }
 
-/*
- * Utility functions
- */
-
-pub(crate) unsafe fn index_bytes_mut(bytes: &mut [u8], element_size: usize, i: usize) -> &mut [u8] {
-    &mut bytes[i * element_size..(i + 1) * element_size]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    type VecCopy = super::VecCopy<()>;
+    type VecUnit = super::VecCopy<()>;
 
     /// Test various ways to create a data buffer.
     #[test]
     fn initialization_test() {
         // Empty typed buffer.
-        let a = VecCopy::with_type::<f32>();
+        let a = VecUnit::with_type::<f32>();
         assert_eq!(a.len(), 0);
         assert_eq!(a.as_bytes().len(), 0);
         assert_eq!(a.element_type_id(), TypeId::of::<f32>());
         assert_eq!(a.byte_capacity(), 0); // Ensure nothing is allocated.
 
         // Empty buffer typed by the given type id.
-        let b = VecCopy::with_type_from(&a);
+        let b = VecUnit::with_type_from(&a);
         assert_eq!(b.len(), 0);
         assert_eq!(b.as_bytes().len(), 0);
         assert_eq!(b.element_type_id(), TypeId::of::<f32>());
         assert_eq!(a.byte_capacity(), 0); // Ensure nothing is allocated.
 
         // Empty typed buffer with a given capacity.
-        let a = VecCopy::with_capacity::<f32>(4);
+        let a = VecUnit::with_capacity::<f32>(4);
         assert_eq!(a.len(), 0);
         assert_eq!(a.as_bytes().len(), 0);
         assert_eq!(a.byte_capacity(), 4 * size_of::<f32>());
@@ -1041,7 +1079,7 @@ mod tests {
     /// Test reserving capacity after creation.
     #[test]
     fn reserve_bytes() {
-        let mut a = VecCopy::with_type::<f32>();
+        let mut a = VecUnit::with_type::<f32>();
         assert_eq!(a.byte_capacity(), 0);
         a.reserve_bytes(10);
         assert_eq!(a.len(), 0);
@@ -1052,7 +1090,7 @@ mod tests {
     /// Test resizing a buffer.
     #[test]
     fn resize() {
-        let mut a = VecCopy::with_type::<f32>();
+        let mut a = VecUnit::with_type::<f32>();
 
         // Increase the size of a.
         a.resize(3, 1.0f32);
@@ -1076,51 +1114,51 @@ mod tests {
     #[test]
     #[should_panic]
     fn zero_size_with_type_test() {
-        let _a = VecCopy::with_type::<()>();
+        let _a = VecUnit::with_type::<()>();
     }
 
     #[test]
     #[should_panic]
     fn zero_size_with_capacity_test() {
-        let _a = VecCopy::with_capacity::<()>(2);
+        let _a = VecUnit::with_capacity::<()>(2);
     }
 
     #[test]
     #[should_panic]
     fn zero_size_from_vec_test() {
-        let _a = VecCopy::from_vec(vec![(); 3]);
+        let _a = VecUnit::from_vec(vec![(); 3]);
     }
 
     #[test]
     #[should_panic]
     fn zero_size_with_size_test() {
-        let _a = VecCopy::with_size(3, ());
+        let _a = VecUnit::with_size(3, ());
     }
 
     #[test]
     #[should_panic]
     fn zero_size_from_slice_test() {
         let v = vec![(); 3];
-        let _a = VecCopy::from_slice(&v);
+        let _a = VecUnit::from_slice(&v);
     }
 
     #[test]
     #[should_panic]
     fn zero_size_copy_from_slice_test() {
         let v = vec![(); 3];
-        let mut a = VecCopy::with_size(0, 1i32);
+        let mut a = VecUnit::with_size(0, 1i32);
         a.copy_from_slice(&v);
     }
 
     #[test]
     fn data_integrity_u8_test() {
         let vec = vec![1u8, 3, 4, 1, 2];
-        let buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<u8> = buf.copy_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
         let vec = vec![1u8, 3, 4, 1, 2, 52, 1, 3, 41, 23, 2];
-        let buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<u8> = buf.copy_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
@@ -1128,12 +1166,12 @@ mod tests {
     #[test]
     fn data_integrity_i16_test() {
         let vec = vec![1i16, -3, 1002, -231, 32];
-        let buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<i16> = buf.copy_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
         let vec = vec![1i16, -3, 1002, -231, 32, 42, -123, 4];
-        let buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<i16> = buf.copy_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
@@ -1141,12 +1179,12 @@ mod tests {
     #[test]
     fn data_integrity_i32_test() {
         let vec = vec![1i32, -3, 1002, -231, 32];
-        let buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<i32> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
         let vec = vec![1i32, -3, 1002, -231, 32, 42, -123];
-        let buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<i32> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
@@ -1154,12 +1192,12 @@ mod tests {
     #[test]
     fn data_integrity_f32_test() {
         let vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
-        let buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<f32> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
         let vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43, 2e-1];
-        let buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<f32> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
@@ -1167,12 +1205,12 @@ mod tests {
     #[test]
     fn data_integrity_f64_test() {
         let vec = vec![1f64, -3.0, 10.02, -23.1, 32e-1];
-        let buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<f64> = buf.copy_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
         let vec = vec![1f64, -3.1, 100.2, -2.31, 3.2, 4e2, -1e23];
-        let buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<f64> = buf.copy_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
@@ -1181,7 +1219,7 @@ mod tests {
     #[test]
     fn convert_float_test() {
         let vecf64 = vec![1f64, -3.0, 10.02, -23.1, 32e-1];
-        let buf = VecCopy::from(vecf64.clone()); // Convert into buffer
+        let buf = VecUnit::from(vecf64.clone()); // Convert into buffer
         let nu_vec: Vec<f32> = buf.cast_into_vec(); // Convert back into vec
         let vecf32 = vec![1f32, -3.0, 10.02, -23.1, 32e-1];
         assert_eq!(vecf32, nu_vec);
@@ -1193,11 +1231,11 @@ mod tests {
         }
 
         let vecf64 = vec![1f64, -3.1, 100.2, -2.31, 3.2, 4e2, -1e23];
-        let buf = VecCopy::from(vecf64.clone()); // Convert into buffer
+        let buf = VecUnit::from(vecf64.clone()); // Convert into buffer
         let nu_vec: Vec<f32> = buf.cast_into_vec(); // Convert back into vec
         let vecf32 = vec![1f32, -3.1, 100.2, -2.31, 3.2, 4e2, -1e23];
         assert_eq!(vecf32, nu_vec);
-        let buf = VecCopy::from(vecf32.clone()); // Convert into buffer
+        let buf = VecUnit::from(vecf32.clone()); // Convert into buffer
         let nu_vec: Vec<f64> = buf.cast_into_vec(); // Convert back into vec
         for (&a, &b) in vecf64.iter().zip(nu_vec.iter()) {
             assert!((a - b).abs() < 1e-6 * f64::max(a, b).abs());
@@ -1214,12 +1252,12 @@ mod tests {
     #[test]
     fn from_empty_vec_test() {
         let vec: Vec<u32> = Vec::new();
-        let buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<u32> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
 
         let vec: Vec<Foo> = Vec::new();
-        let buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Foo> = buf.into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
@@ -1237,7 +1275,7 @@ mod tests {
             c: 323454.2,
         };
         let vec = vec![f1.clone(), f2.clone()];
-        let buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec.clone()); // Convert into buffer
         assert_eq!(f1, buf.get_ref_as::<Foo>(0).unwrap().clone());
         assert_eq!(f2, buf.get_ref_as::<Foo>(1).unwrap().clone());
         let nu_vec: Vec<Foo> = buf.into_vec().unwrap(); // Convert back into vec
@@ -1248,14 +1286,14 @@ mod tests {
     fn iter_test() {
         // Check iterating over data with a larger size than 8 bits.
         let vec_f32 = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
-        let buf = VecCopy::from(vec_f32.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec_f32.clone()); // Convert into buffer
         for (i, &val) in buf.iter_as::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
         }
 
         // Check iterating over data with the same size.
         let vec_u8 = vec![1u8, 3, 4, 1, 2, 4, 128, 32];
-        let buf = VecCopy::from(vec_u8.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec_u8.clone()); // Convert into buffer
         for (i, &val) in buf.iter_as::<u8>().unwrap().enumerate() {
             assert_eq!(val, vec_u8[i]);
         }
@@ -1265,13 +1303,13 @@ mod tests {
             // TODO: feature gate these two tests for little endian platforms.
             // Check iterating over data with a larger size than input.
             let vec_u32 = vec![17_040_129u32, 545_260_546]; // little endian
-            let buf = VecCopy::from(vec_u8.clone()); // Convert into buffer
+            let buf = VecUnit::from(vec_u8.clone()); // Convert into buffer
             for (i, &val) in buf.reinterpret_iter::<u32>().enumerate() {
                 assert_eq!(val, vec_u32[i]);
             }
 
             // Check iterating over data with a smaller size than input
-            let mut buf2 = VecCopy::from(vec_u32); // Convert into buffer
+            let mut buf2 = VecUnit::from(vec_u32); // Convert into buffer
             for (i, &val) in buf2.reinterpret_iter::<u8>().enumerate() {
                 assert_eq!(val, vec_u8[i]);
             }
@@ -1288,7 +1326,7 @@ mod tests {
     fn large_sizes_test() {
         for i in 1000000..1000010 {
             let vec = vec![32u8; i];
-            let buf = VecCopy::from(vec.clone()); // Convert into buffer
+            let buf = VecUnit::from(vec.clone()); // Convert into buffer
             let nu_vec: Vec<u8> = buf.into_vec().unwrap(); // Convert back into vec
             assert_eq!(vec, nu_vec);
         }
@@ -1299,7 +1337,7 @@ mod tests {
     #[test]
     fn wrong_type_test() {
         let vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
-        let mut buf = VecCopy::from(vec.clone()); // Convert into buffer
+        let mut buf = VecUnit::from(vec.clone()); // Convert into buffer
         assert_eq!(vec, buf.copy_into_vec::<f32>().unwrap());
 
         assert!(buf.copy_into_vec::<f64>().is_none());
@@ -1315,7 +1353,7 @@ mod tests {
     #[test]
     fn byte_chunks_test() {
         let vec_f32 = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
-        let buf = VecCopy::from(vec_f32.clone()); // Convert into buffer
+        let buf = VecUnit::from(vec_f32.clone()); // Convert into buffer
 
         for (i, val) in buf.byte_chunks().enumerate() {
             assert_eq!(
@@ -1329,7 +1367,7 @@ mod tests {
     #[test]
     fn push_test() {
         let mut vec_f32 = vec![1.0_f32, 23.0, 0.01];
-        let mut buf = VecCopy::from(vec_f32.clone()); // Convert into buffer
+        let mut buf = VecUnit::from(vec_f32.clone()); // Convert into buffer
         for (i, &val) in buf.iter_as::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
         }
@@ -1374,11 +1412,11 @@ mod tests {
     /// Test appending to a data buffer from another data buffer.
     #[test]
     fn append_test() {
-        let mut buf = VecCopy::with_type::<f32>(); // Create an empty buffer.
+        let mut buf = VecUnit::with_type::<f32>(); // Create an empty buffer.
 
         let data = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
         // Append an ordianry vector of data.
-        let mut other_buf = VecCopy::from_vec(data.clone());
+        let mut other_buf = VecUnit::from_vec(data.clone());
         buf.append(&mut other_buf);
 
         assert!(other_buf.is_empty());
@@ -1391,7 +1429,7 @@ mod tests {
     /// Test appending to a data buffer from other slices and vectors.
     #[test]
     fn extend_append_bytes_test() {
-        let mut buf = VecCopy::with_type::<f32>(); // Create an empty buffer.
+        let mut buf = VecUnit::with_type::<f32>(); // Create an empty buffer.
 
         // Append an ordianry vector of data.
         let vec_f32 = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
@@ -1419,5 +1457,22 @@ mod tests {
         for (i, &val) in buf.iter_as::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
         }
+    }
+
+    /// Test dynamically sized vtables.
+    #[test]
+    fn dynamic_vtables() {
+        use crate::into_dyn;
+        let buf = VecUnit::with_type::<u8>(); // Create an empty buffer.
+
+        let mut buf_dyn = into_dyn![VecCopy<dyn Any>](buf);
+
+        buf_dyn.push(CopyValueRef::<()>::new(&1u8));
+        buf_dyn.push(CopyValueRef::<()>::new(&100u8));
+        buf_dyn.push(CopyValueRef::<()>::new(&23u8));
+
+        let vec: Vec<u8> = buf_dyn.into_vec().unwrap();
+
+        assert_eq!(vec, vec![1u8, 100, 23]);
     }
 }
