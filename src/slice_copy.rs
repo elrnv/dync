@@ -62,7 +62,30 @@ impl<'a, V> SliceCopy<'a, V> {
 }
 
 impl<'a, V: ?Sized> SliceCopy<'a, V> {
-    pub(crate) unsafe fn from_raw_parts(
+    /// Convert this collection into its raw components.
+    ///
+    /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
+    /// stabilized.
+    #[inline]
+    pub unsafe fn into_raw_parts(self) -> (&'a [u8], usize, TypeId, VTableRef<'a, V>) {
+        let SliceCopy {
+            data,
+            element_size,
+            element_type_id,
+            vtable,
+        } = self;
+        (data, element_size, element_type_id, vtable)
+    }
+
+    /// This is very unsafe to use.
+    ///
+    /// Almost exclusively the only inputs that work here are the ones returned by
+    /// `into_raw_parts`.
+    ///
+    /// This function should not be used other than in internal APIs. It exists to enable the
+    /// `into_dyn` macro until `CoerceUsize` is stabilized.
+    #[inline]
+    pub unsafe fn from_raw_parts(
         data: &'a [u8],
         element_size: usize,
         element_type_id: TypeId,
@@ -371,7 +394,30 @@ impl<'a, V> SliceCopyMut<'a, V> {
 }
 
 impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
-    pub(crate) unsafe fn from_raw_parts(
+    /// Convert this collection into its raw components.
+    ///
+    /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
+    /// stabilized.
+    #[inline]
+    pub unsafe fn into_raw_parts(self) -> (&'a mut [u8], usize, TypeId, VTableRef<'a, V>) {
+        let SliceCopyMut {
+            data,
+            element_size,
+            element_type_id,
+            vtable,
+        } = self;
+        (data, element_size, element_type_id, vtable)
+    }
+
+    /// This is very unsafe to use.
+    ///
+    /// Almost exclusively the only inputs that work here are the ones returned by
+    /// `into_raw_parts`.
+    ///
+    /// This function should not be used other than in internal APIs. It exists to enable the
+    /// `into_dyn` macro until `CoerceUsize` is stabilized.
+    #[inline]
+    pub unsafe fn from_raw_parts(
         data: &'a mut [u8],
         element_size: usize,
         element_type_id: TypeId,
@@ -736,5 +782,33 @@ impl<'b, 'a: 'b, V: ?Sized> From<&'b SliceCopyMut<'a, V>> for SliceCopy<'b, V> {
         unsafe {
             SliceCopy::from_raw_parts(s.data, s.element_size, s.element_type_id, s.vtable.as_ref())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::VecCopy;
+
+    /// Test dynamically sized vtables.
+    #[test]
+    fn dynamic_vtables() {
+        use crate::into_dyn;
+        let vec = vec![1u8, 100, 23];
+
+        // SliceCopyMut
+        let mut buf = VecCopy::<()>::from_vec(vec.clone());
+        let slice = buf.as_mut_slice();
+        let mut slice_dyn = into_dyn![SliceCopyMut<dyn Any>](slice);
+        *slice_dyn.get_mut(1).downcast::<u8>().unwrap() += 1u8;
+        assert_eq!(buf.into_vec::<u8>().unwrap(), vec![1u8, 101, 23]);
+
+        // SliceCopy
+        let buf = VecCopy::<()>::from_vec(vec.clone());
+        let slice = buf.as_slice();
+        let slice_dyn = into_dyn![SliceCopy<dyn Any>](slice);
+        assert_eq!(*slice_dyn.get(0).downcast::<u8>().unwrap(), 1u8);
+        assert_eq!(*slice_dyn.get(1).downcast::<u8>().unwrap(), 100u8);
+        assert_eq!(*slice_dyn.get(2).downcast::<u8>().unwrap(), 23u8);
     }
 }

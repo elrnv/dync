@@ -401,7 +401,7 @@ impl<V> Value<usize, V> {
 /// Note we always need Drop because it's possible to clone ValueRef's contents, which need to know
 /// how to drop themselves.
 #[derive(Clone, Debug)]
-pub(crate) enum VTableRef<'a, V>
+pub enum VTableRef<'a, V>
 where
     V: ?Sized,
 {

@@ -3,7 +3,7 @@ use std::any::Any;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::prelude::*;
 
-use dync::{dync_trait, VecCopy, VecDyn};
+use dync::{dync_trait, into_dyn, VecCopy, VecDrop};
 
 static SEED: [u8; 32] = [3; 32];
 
@@ -30,16 +30,18 @@ fn make_random_vec_any(n: usize) -> Vec<Box<dyn Any>> {
 
 #[inline]
 fn make_random_vec_copy(n: usize) -> VecCopy {
-    let mut rng: StdRng = SeedableRng::from_seed(SEED);
-    let vec: Vec<_> = (0..n).map(move |_| [rng.gen::<i64>(); 3]).collect();
-    vec.into()
+    make_random_vec(n).into()
 }
 
 #[inline]
-fn make_random_vec_dyn(n: usize) -> VecDyn<DynCloneVTable> {
-    let mut rng: StdRng = SeedableRng::from_seed(SEED);
-    let vec: Vec<_> = (0..n).map(move |_| [rng.gen::<i64>(); 3]).collect();
-    vec.into()
+fn make_random_vec_drop(n: usize) -> VecDrop<DynCloneVTable> {
+    make_random_vec(n).into()
+}
+
+#[inline]
+fn make_random_vec_dyn(n: usize) -> VecCopy<dyn Any> {
+    let vec: VecCopy = make_random_vec_copy(n);
+    into_dyn![VecCopy<dyn Any>](vec)
 }
 
 #[inline]
@@ -84,7 +86,18 @@ fn vec_copy_compute<V>(v: &mut VecCopy<V>) {
 }
 
 #[inline]
-fn vec_dyn_compute<V: Clone>(v: &mut VecDyn<V>) {
+fn vec_drop_compute<V: Clone>(v: &mut VecDrop<V>) {
+    for a in v.iter_mut() {
+        let a = a.downcast::<[i64; 3]>().unwrap();
+        let res = compute(a[0], a[1], a[2]);
+        a[0] = res[0];
+        a[1] = res[1];
+        a[2] = res[2];
+    }
+}
+
+#[inline]
+fn vec_dyn_compute(v: &mut VecCopy<dyn Any>) {
     for a in v.iter_mut() {
         let a = a.downcast::<[i64; 3]>().unwrap();
         let res = compute(a[0], a[1], a[2]);
@@ -116,6 +129,13 @@ fn type_erasure(c: &mut Criterion) {
             let mut v = make_random_vec_copy(buf_size);
             b.iter(|| {
                 vec_copy_compute(&mut v);
+            })
+        });
+
+        group.bench_function(BenchmarkId::new("VecDrop", buf_size), |b| {
+            let mut v = make_random_vec_drop(buf_size);
+            b.iter(|| {
+                vec_drop_compute(&mut v);
             })
         });
 

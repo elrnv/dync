@@ -222,6 +222,43 @@ impl<V> VecCopy<V> {
 }
 
 impl<V: ?Sized> VecCopy<V> {
+    /// This is very unsafe to use.
+    ///
+    /// Almost exclusively the only inputs that work here are the ones returned by
+    /// `into_raw_parts`.
+    ///
+    /// This function should not be used other than in internal APIs. It exists to enable the
+    /// `into_dyn` macro until `CoerceUsize` is stabilized.
+    #[inline]
+    pub unsafe fn from_raw_parts(
+        data: Vec<u8>,
+        element_size: usize,
+        element_type_id: TypeId,
+        vtable: Rc<V>,
+    ) -> VecCopy<V> {
+        VecCopy {
+            data,
+            element_size,
+            element_type_id,
+            vtable,
+        }
+    }
+
+    /// Convert this collection into its raw components.
+    ///
+    /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
+    /// stabilized.
+    #[inline]
+    pub unsafe fn into_raw_parts(self) -> (Vec<u8>, usize, TypeId, Rc<V>) {
+        let VecCopy {
+            data,
+            element_size,
+            element_type_id,
+            vtable,
+        } = self;
+        (data, element_size, element_type_id, vtable)
+    }
+
     /// Upcast the `VecCopy` into a more general base `VecCopy`.
     ///
     /// This function converts the underlying virtual function table into a subset of the existing

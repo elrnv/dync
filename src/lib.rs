@@ -33,13 +33,44 @@ pub use vec_drop::*;
 /// Convert a given container type (e.g. `VecCopy` or `SliceDyn`) to have a dynamic VTable.
 #[macro_export]
 macro_rules! into_dyn {
-    ($vec:ident < dyn $trait:path >) => {{
+    (SliceCopy < dyn $trait:path >) => {{
+        into_dyn![@slice SliceCopy < dyn $trait >]
+    }};
+    (SliceCopyMut < dyn $trait:path >) => {{
+        into_dyn![@slice SliceCopyMut < dyn $trait >]
+    }};
+    (VecCopy < dyn $trait:path >) => {{
+        into_dyn![@owned VecCopy < dyn $trait >]
+    }};
+    (@owned $vec:ident < dyn $trait:path >) => {{
         fn into_dyn<V: 'static + $trait>(vec: $crate::$vec<V>) -> $crate::$vec<dyn $trait> {
-            $crate::$vec {
-                data: vec.data,
-                element_size: vec.element_size,
-                element_type_id: vec.element_type_id,
-                vtable: vec.vtable,
+            unsafe {
+                let (data, size, id, vtable) = vec.into_raw_parts();
+                let updated_vtable: std::rc::Rc<dyn $trait> = vtable;
+                $vec::from_raw_parts(data, size, id, updated_vtable)
+            }
+        }
+
+        into_dyn
+    }};
+    (@slice $slice:ident < dyn $trait:path >) => {{
+        fn into_dyn<'a, V: 'static + $trait>(slice: $crate::$slice<'a, V>) -> $crate::$slice<'a, dyn $trait> {
+            unsafe {
+                let (data, size, id, vtable) = slice.into_raw_parts();
+                match vtable {
+                    $crate::VTableRef::Ref(v) => {
+                        let updated_vtable: &dyn $trait = v;
+                        $slice::from_raw_parts(data, size, id, updated_vtable)
+                    }
+                    $crate::VTableRef::Box(v) => {
+                        let updated_vtable: Box<dyn $trait> = v;
+                        $slice::from_raw_parts(data, size, id, updated_vtable)
+                    }
+                    $crate::VTableRef::Rc(v) => {
+                        let updated_vtable: std::rc::Rc<dyn $trait> = v;
+                        $slice::from_raw_parts(data, size, id, updated_vtable)
+                    }
+                }
             }
         }
 
