@@ -3,6 +3,7 @@ use std::{
     any::{Any, TypeId},
     fmt,
     mem::ManuallyDrop,
+    rc::Rc,
     slice,
 };
 
@@ -15,11 +16,14 @@ use crate::VecCopy;
 pub trait Elem: Any + DropBytes {}
 impl<T> Elem for T where T: Any + DropBytes {}
 
-pub struct VecDrop<V> {
-    data: ManuallyDrop<VecCopy<(DropFn, V)>>,
+pub struct VecDrop<V>
+where
+    V: ?Sized + HasDrop,
+{
+    data: ManuallyDrop<VecCopy<V>>,
 }
 
-impl<V> Drop for VecDrop<V> {
+impl<V: ?Sized + HasDrop> Drop for VecDrop<V> {
     fn drop(&mut self) {
         unsafe {
             let VecCopy {
@@ -36,14 +40,14 @@ impl<V> Drop for VecDrop<V> {
     }
 }
 
-impl<V: HasClone> Clone for VecDrop<V> {
+impl<V: ?Sized + HasDrop + HasClone> Clone for VecDrop<V> {
     fn clone(&self) -> Self {
         let data_clone = |bytes: &[u8]| {
             let mut new_data = bytes.to_vec();
             self.data
                 .byte_chunks()
                 .zip(new_data.chunks_exact_mut(self.data.element_size()))
-                .for_each(|(src, dst)| unsafe { self.data.vtable.1.clone_from_fn()(dst, src) });
+                .for_each(|(src, dst)| unsafe { self.data.vtable.clone_from_fn()(dst, src) });
             new_data
         };
         VecDrop {
@@ -52,7 +56,7 @@ impl<V: HasClone> Clone for VecDrop<V> {
     }
 }
 
-impl<V: HasPartialEq> PartialEq for VecDrop<V> {
+impl<V: ?Sized + HasDrop + HasPartialEq> PartialEq for VecDrop<V> {
     fn eq(&self, other: &Self) -> bool {
         self.iter()
             .zip(other.iter())
@@ -60,26 +64,21 @@ impl<V: HasPartialEq> PartialEq for VecDrop<V> {
     }
 }
 
-impl<V: HasEq> Eq for VecDrop<V> {}
+impl<V: ?Sized + HasDrop + HasEq> Eq for VecDrop<V> {}
 
-impl<V: HasHash> std::hash::Hash for VecDrop<V> {
+impl<V: ?Sized + HasDrop + HasHash> std::hash::Hash for VecDrop<V> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.iter().for_each(|elem| elem.hash(state));
     }
 }
 
-impl<V: HasDebug> fmt::Debug for VecDrop<V> {
+impl<V: ?Sized + HasDrop + HasDebug> fmt::Debug for VecDrop<V> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_list().entries(self.iter()).finish()
     }
 }
 
-impl<V> VecDrop<V> {
-    /// Retrieve the associated virtual function table.
-    pub fn vtable(&self) -> &V {
-        &self.data.vtable.1
-    }
-
+impl<V: HasDrop> VecDrop<V> {
     /// Construct an empty vector with a specific pointed-to element type.
     #[inline]
     pub fn with_type<T: Elem>() -> Self
@@ -95,9 +94,9 @@ impl<V> VecDrop<V> {
 
     /// Construct a vector with the same type as the given vector without copying its data.
     #[inline]
-    pub fn with_type_from(other: &VecDrop<V>) -> Self {
+    pub fn with_type_from(other: impl Into<Meta<Rc<V>>>) -> Self {
         VecDrop {
-            data: ManuallyDrop::new(VecCopy::with_type_from(&other.data)),
+            data: ManuallyDrop::new(VecCopy::with_type_from(other.into())),
         }
     }
 
@@ -126,12 +125,57 @@ impl<V> VecDrop<V> {
             data: ManuallyDrop::new(unsafe { VecCopy::from_vec_non_copy(vec) }),
         }
     }
+}
 
+impl<V: ?Sized + HasDrop> VecDrop<V> {
+    /// This is very unsafe to use.
+    ///
+    /// Almost exclusively the only inputs that work here are the ones returned by
+    /// `VecDrop::into_raw_parts`.
+    ///
+    /// This function should not be used other than in internal APIs. It exists to enable the
+    /// `into_dyn` macro until `CoerceUsize` is stabilized.
+    #[inline]
+    pub unsafe fn from_raw_parts(
+        data: Vec<u8>,
+        element_size: usize,
+        element_type_id: TypeId,
+        vtable: Rc<V>,
+    ) -> VecDrop<V> {
+        VecDrop {
+            data: ManuallyDrop::new(VecCopy {
+                data,
+                element_size,
+                element_type_id,
+                vtable,
+            }),
+        }
+    }
+
+    /// Convert this collection into its raw components.
+    ///
+    /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
+    /// stabilized.
+    #[inline]
+    pub unsafe fn into_raw_parts(mut self) -> (Vec<u8>, usize, TypeId, Rc<V>) {
+        let VecCopy {
+            data,
+            element_size,
+            element_type_id,
+            vtable,
+        } = ManuallyDrop::take(&mut self.data);
+        (data, element_size, element_type_id, vtable)
+    }
+
+    /// Retrieve the associated virtual function table.
+    pub fn vtable(&self) -> &V {
+        &self.data.vtable
+    }
     /// Upcast the `VecDrop` into a more general base `VecDrop`.
     ///
     /// This function converts the underlying virtual function table into a subset of the existing
     #[inline]
-    pub fn upcast<U: From<V>>(self) -> VecDrop<U>
+    pub fn upcast<U: HasDrop + From<V>>(self) -> VecDrop<U>
     where
         V: Clone,
     {
@@ -140,7 +184,7 @@ impl<V> VecDrop<V> {
         // This is safe since self will not be dropped, so md.data will not be dropped.
         let data = unsafe { ManuallyDrop::take(&mut md.data) };
         VecDrop {
-            data: ManuallyDrop::new(data.upcast_with(|(drop, v)| (drop, U::from(v)))),
+            data: ManuallyDrop::new(data.upcast()), //_with(|(drop, v)| (drop, U::from(v)))),
         }
     }
 
@@ -343,7 +387,7 @@ impl<V> VecDrop<V> {
     ///
     /// Note that the vtables need not patch, only the underlying types are required to match.
     #[inline]
-    pub fn push<U>(&mut self, value: BoxValue<U>) -> Option<&mut Self> {
+    pub fn push<U: ?Sized + HasDrop>(&mut self, value: BoxValue<U>) -> Option<&mut Self> {
         if self.element_type_id() == value.value_type_id() {
             // Prevent the value from being dropped at the end of this scope since it will be later
             // dropped by this container.
@@ -373,10 +417,7 @@ impl<V> VecDrop<V> {
             self.data.data.resize(orig_len + value.bytes.len(), 0u8);
             // This does not leak because the copied bytes are guaranteed to be dropped.
             unsafe {
-                self.data.vtable.1.clone_into_raw_fn()(
-                    value.bytes,
-                    &mut self.data.data[orig_len..],
-                );
+                self.data.vtable.clone_into_raw_fn()(value.bytes, &mut self.data.data[orig_len..]);
             }
             Some(self)
         } else {
@@ -523,7 +564,7 @@ impl<V> VecDrop<V> {
 }
 
 // Additional functionality of VecDrops that implement Clone.
-impl<V: HasClone> VecDrop<V> {
+impl<V: HasDrop + HasClone> VecDrop<V> {
     /// Construct a typed `DataBuffer` with a given size and filled with the specified default
     /// value.
     #[inline]
@@ -550,7 +591,9 @@ impl<V: HasClone> VecDrop<V> {
             data: ManuallyDrop::new(unsafe { VecCopy::from_slice_non_copy::<T>(slice) }),
         }
     }
+}
 
+impl<V: ?Sized + HasDrop + HasClone> VecDrop<V> {
     /// Resizes the buffer in-place to store `new_len` elements and returns an optional
     /// mutable reference to `Self`.
     ///
@@ -631,8 +674,15 @@ impl<V: HasClone> VecDrop<V> {
     }
 }
 
+impl<'a, V: HasDrop> From<&'a VecDrop<V>> for Meta<Rc<V>> {
+    #[inline]
+    fn from(v: &'a VecDrop<V>) -> Self {
+        Meta::from(&*v.data)
+    }
+}
+
 /// Convert a `Vec` to a buffer.
-impl<T: Elem, V: VTable<T>> From<Vec<T>> for VecDrop<V> {
+impl<T: Elem, V: HasDrop + VTable<T>> From<Vec<T>> for VecDrop<V> {
     #[inline]
     fn from(vec: Vec<T>) -> VecDrop<V> {
         VecDrop::from_vec(vec)
@@ -643,7 +693,7 @@ impl<T: Elem, V: VTable<T>> From<Vec<T>> for VecDrop<V> {
 impl<'a, T, V> From<&'a [T]> for VecDrop<V>
 where
     T: Elem + Clone,
-    V: VTable<T> + HasClone,
+    V: HasDrop + VTable<T> + HasClone,
 {
     #[inline]
     fn from(slice: &'a [T]) -> VecDrop<V> {
@@ -652,7 +702,7 @@ where
 }
 
 /// Convert a buffer to a `Vec` with an option to fail.
-impl<T: Elem, V: VTable<T>> Into<Option<Vec<T>>> for VecDrop<V> {
+impl<T: Elem, V: ?Sized + HasDrop + VTable<T>> Into<Option<Vec<T>>> for VecDrop<V> {
     #[inline]
     fn into(self) -> Option<Vec<T>> {
         self.into_vec()
@@ -707,7 +757,7 @@ mod tests {
     }
 
     #[inline]
-    fn vec_dyn_compute<V: Clone>(v: &mut VecDrop<V>) {
+    fn vec_dyn_compute<V: Clone + HasDrop>(v: &mut VecDrop<V>) {
         for a in v.iter_mut() {
             let a = a.downcast::<[i64; 3]>().unwrap();
             let res = compute(a[0], a[1], a[2]);
@@ -1041,5 +1091,23 @@ mod tests {
         for (i, val) in buf.iter_as::<Rc<u8>>().unwrap().enumerate() {
             assert_eq!(val, &data[i]);
         }
+    }
+
+    #[test]
+    fn dynamic_vtables_assignment() {
+        use crate::{from_dyn, into_dyn};
+
+        let buf = VecDropAll::with_type::<u8>(); // Create an empty buffer.
+
+        let mut buf_dyn = into_dyn![VecDrop<dyn HasAllTrait>](buf);
+
+        buf_dyn.push(BoxValue::<AllTraitVTable>::new(1u8));
+        buf_dyn.push(BoxValue::<AllTraitVTable>::new(100u8));
+        buf_dyn.push(BoxValue::<AllTraitVTable>::new(23u8));
+
+        let buf = from_dyn![VecDrop<dyn HasAllTrait as AllTraitVTable>](buf_dyn);
+        let vec: Vec<u8> = buf.into_vec().unwrap();
+
+        assert_eq!(vec, vec![1u8, 100, 23]);
     }
 }

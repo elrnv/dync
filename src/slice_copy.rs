@@ -1,6 +1,7 @@
 use std::{
     any::{Any, TypeId},
     mem::size_of,
+    rc::Rc,
     slice,
 };
 
@@ -57,6 +58,28 @@ impl<'a, V> SliceCopy<'a, V> {
             element_size,
             element_type_id: TypeId::of::<T>(),
             vtable: VTableRef::Box(Box::new(V::build_vtable())),
+        }
+    }
+}
+
+impl<'a, V> From<SliceCopy<'a, V>> for Meta<VTableRef<'a, V>> {
+    #[inline]
+    fn from(slice: SliceCopy<'a, V>) -> Self {
+        Meta {
+            element_size: slice.element_size,
+            element_type_id: slice.element_type_id,
+            vtable: slice.vtable,
+        }
+    }
+}
+
+impl<'a, V: Clone> From<SliceCopy<'a, V>> for Meta<Rc<V>> {
+    #[inline]
+    fn from(slice: SliceCopy<'a, V>) -> Self {
+        Meta {
+            element_size: slice.element_size,
+            element_type_id: slice.element_type_id,
+            vtable: slice.vtable.into_rc(),
         }
     }
 }
@@ -277,6 +300,50 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
         }
     }
 
+    /// Get a immutable value reference to the element at index `i`.
+    #[inline]
+    pub fn get(&self, i: usize) -> CopyValueRef<V> {
+        debug_assert!(i < self.len());
+        // This call is safe since our buffer guarantees that the given bytes have the
+        // corresponding TypeId.
+        unsafe {
+            CopyValueRef::from_raw_parts(
+                &self.index_byte_slice(i),
+                self.element_type_id(),
+                self.vtable.as_ref(),
+            )
+        }
+    }
+
+    /// Get an immutable subslice representing the given range of indices.
+    #[inline]
+    pub fn subslice<I>(&self, i: I) -> SliceCopy<V>
+    where
+        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+    {
+        SliceCopy {
+            data: &self.data[i.scale_range(self.element_size())],
+            element_size: self.element_size,
+            element_type_id: self.element_type_id,
+            vtable: VTableRef::Ref(self.vtable.as_ref()),
+        }
+    }
+
+    /// Conver this slice into a mutable subslice representing the given range of indices.
+    #[inline]
+    pub fn into_subslice<I>(self, i: I) -> SliceCopy<'a, V>
+    where
+        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+    {
+        let element_size = self.element_size();
+        SliceCopy {
+            data: &self.data[i.scale_range(element_size)],
+            element_size: self.element_size,
+            element_type_id: self.element_type_id,
+            vtable: self.vtable,
+        }
+    }
+
     /*
      * Advanced functions
      */
@@ -296,38 +363,6 @@ impl<'a, V: ?Sized> ElementBytes for SliceCopy<'a, V> {
     #[inline]
     fn bytes(&self) -> &[u8] {
         &self.data
-    }
-}
-
-impl<'a, V: ?Sized> IndexSlice<'a, usize> for SliceCopy<'a, V> {
-    type Output = CopyValueRef<'a, V>;
-    fn get(&'a self, i: usize) -> Self::Output {
-        debug_assert!(i < self.len());
-        // This call is safe since our buffer guarantees that the given bytes have the
-        // corresponding TypeId.
-        unsafe {
-            CopyValueRef::from_raw_parts(
-                self.index_byte_slice(i),
-                self.element_type_id(),
-                self.vtable.as_ref(),
-            )
-        }
-    }
-}
-
-impl<'a, V: ?Sized, I> IndexSlice<'a, I> for SliceCopy<'a, V>
-where
-    I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
-{
-    type Output = SliceCopy<'a, V>;
-    #[inline]
-    fn get(&'a self, i: I) -> Self::Output {
-        SliceCopy {
-            data: &self.data[i.scale_range(self.element_size())],
-            element_size: self.element_size,
-            element_type_id: self.element_type_id,
-            vtable: VTableRef::Ref(self.vtable.as_ref()),
-        }
     }
 }
 
@@ -666,6 +701,105 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
             )
         }
     }
+
+    /// Get a immutable value reference to the element at index `i`.
+    #[inline]
+    pub fn get(&self, i: usize) -> CopyValueRef<V> {
+        debug_assert!(i < self.len());
+        // This call is safe since our buffer guarantees that the given bytes have the
+        // corresponding TypeId.
+        unsafe {
+            CopyValueRef::from_raw_parts(
+                &self.index_byte_slice(i),
+                self.element_type_id(),
+                self.vtable.as_ref(),
+            )
+        }
+    }
+
+    /// Get a mutable value reference to the element at index `i`.
+    #[inline]
+    pub fn get_mut(&mut self, i: usize) -> CopyValueMut<V> {
+        debug_assert!(i < self.len());
+        let element_type_id = self.element_type_id();
+        let element_bytes = self.index_byte_range(i);
+
+        // This call is safe since our buffer guarantees that the given bytes have the
+        // corresponding TypeId.
+        unsafe {
+            CopyValueMut::from_raw_parts(
+                &mut self.data[element_bytes],
+                element_type_id,
+                self.vtable.as_ref(),
+            )
+        }
+    }
+
+    /// Get an immutable subslice representing the given range of indices.
+    #[inline]
+    pub fn subslice<I>(&self, i: I) -> SliceCopy<V>
+    where
+        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+    {
+        SliceCopy {
+            data: &self.data[i.scale_range(self.element_size())],
+            element_size: self.element_size,
+            element_type_id: self.element_type_id,
+            vtable: VTableRef::Ref(self.vtable.as_ref()),
+        }
+    }
+
+    /// Get a mutable subslice representing the given range of indices.
+    #[inline]
+    pub fn subslice_mut<I>(&mut self, i: I) -> SliceCopyMut<V>
+    where
+        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+    {
+        let element_size = self.element_size();
+        SliceCopyMut {
+            data: &mut self.data[i.scale_range(element_size)],
+            element_size: self.element_size,
+            element_type_id: self.element_type_id,
+            vtable: VTableRef::Ref(self.vtable.as_ref()),
+        }
+    }
+
+    /// Conver this slice into a mutable subslice representing the given range of indices.
+    #[inline]
+    pub fn into_subslice<I>(self, i: I) -> SliceCopyMut<'a, V>
+    where
+        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+    {
+        let element_size = self.element_size();
+        SliceCopyMut {
+            data: &mut self.data[i.scale_range(element_size)],
+            element_size: self.element_size,
+            element_type_id: self.element_type_id,
+            vtable: self.vtable,
+        }
+    }
+}
+
+impl<'a, V> From<SliceCopyMut<'a, V>> for Meta<VTableRef<'a, V>> {
+    #[inline]
+    fn from(slice: SliceCopyMut<'a, V>) -> Self {
+        Meta {
+            element_size: slice.element_size,
+            element_type_id: slice.element_type_id,
+            vtable: slice.vtable,
+        }
+    }
+}
+
+impl<'a, V: Clone> From<SliceCopyMut<'a, V>> for Meta<Rc<V>> {
+    #[inline]
+    fn from(slice: SliceCopyMut<'a, V>) -> Self {
+        Meta {
+            element_size: slice.element_size,
+            element_type_id: slice.element_type_id,
+            vtable: slice.vtable.into_rc(),
+        }
+    }
 }
 
 impl<'a, V: ?Sized> ElementBytes for SliceCopyMut<'a, V> {
@@ -683,72 +817,6 @@ impl<'a, V: ?Sized> ElementBytesMut for SliceCopyMut<'a, V> {
     #[inline]
     fn bytes_mut(&mut self) -> &mut [u8] {
         &mut self.data
-    }
-}
-
-impl<'a, V: ?Sized> IndexSlice<'a, usize> for SliceCopyMut<'a, V> {
-    type Output = CopyValueRef<'a, V>;
-    fn get(&'a self, i: usize) -> Self::Output {
-        debug_assert!(i < self.len());
-        // This call is safe since our buffer guarantees that the given bytes have the
-        // corresponding TypeId.
-        unsafe {
-            CopyValueRef::from_raw_parts(
-                self.index_byte_slice(i),
-                self.element_type_id(),
-                self.vtable.as_ref(),
-            )
-        }
-    }
-}
-
-impl<'a, V: ?Sized> IndexSliceMut<'a, usize> for SliceCopyMut<'a, V> {
-    type Output = CopyValueMut<'a, V>;
-    fn get_mut(&'a mut self, i: usize) -> Self::Output {
-        debug_assert!(i < self.len());
-        let element_type_id = self.element_type_id();
-        let element_bytes = self.index_byte_range(i);
-
-        // This call is safe since our buffer guarantees that the given bytes have the
-        // corresponding TypeId.
-        unsafe {
-            CopyValueMut::from_raw_parts(
-                &mut self.data[element_bytes],
-                element_type_id,
-                self.vtable.as_ref(),
-            )
-        }
-    }
-}
-
-impl<'a, V: ?Sized, I> IndexSlice<'a, I> for SliceCopyMut<'a, V>
-where
-    I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
-{
-    type Output = SliceCopy<'a, V>;
-    fn get(&'a self, i: I) -> Self::Output {
-        SliceCopy {
-            data: &self.data[i.scale_range(self.element_size())],
-            element_size: self.element_size,
-            element_type_id: self.element_type_id,
-            vtable: VTableRef::Ref(self.vtable.as_ref()),
-        }
-    }
-}
-
-impl<'a, V: ?Sized, I> IndexSliceMut<'a, I> for SliceCopyMut<'a, V>
-where
-    I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
-{
-    type Output = SliceCopyMut<'a, V>;
-    fn get_mut(&'a mut self, i: I) -> Self::Output {
-        let element_size = self.element_size();
-        SliceCopyMut {
-            data: &mut self.data[i.scale_range(element_size)],
-            element_size: self.element_size,
-            element_type_id: self.element_type_id,
-            vtable: VTableRef::Ref(self.vtable.as_ref()),
-        }
     }
 }
 

@@ -35,6 +35,48 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+/// Defines a meta struct containing information about a type but not the type itself.
+///
+/// Note that here V would typically represent a pointer type.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Meta<V> {
+    pub element_size: usize,
+    pub element_type_id: TypeId,
+    pub vtable: V,
+}
+
+impl<'a, B: GetBytesMut, V: HasDrop> From<&'a Value<B, V>> for Meta<Rc<V>> {
+    #[inline]
+    fn from(val: &'a Value<B, V>) -> Meta<Rc<V>> {
+        Meta {
+            element_size: val.bytes.get_bytes_ref().len(),
+            element_type_id: val.type_id,
+            vtable: Rc::clone(&val.vtable),
+        }
+    }
+}
+impl<'a, V: HasDrop> From<ValueRef<'a, V>> for Meta<VTableRef<'a, V>> {
+    #[inline]
+    fn from(val: ValueRef<'a, V>) -> Meta<VTableRef<'a, V>> {
+        Meta {
+            element_size: val.bytes.len(),
+            element_type_id: val.type_id,
+            vtable: val.vtable,
+        }
+    }
+}
+
+impl<'a, V: HasDrop> From<ValueMut<'a, V>> for Meta<VTableRef<'a, V>> {
+    #[inline]
+    fn from(val: ValueMut<'a, V>) -> Meta<VTableRef<'a, V>> {
+        Meta {
+            element_size: val.bytes.len(),
+            element_type_id: val.type_id,
+            vtable: val.vtable,
+        }
+    }
+}
+
 // Implement the basis for all value types.
 macro_rules! impl_value_base {
     () => {
@@ -69,7 +111,7 @@ macro_rules! impl_value_base {
     };
 }
 
-impl<T> HasDrop for (DropFn, T) {
+impl<T: Any> HasDrop for (DropFn, T) {
     #[inline]
     fn drop_fn(&self) -> &DropFn {
         &self.0
@@ -186,10 +228,11 @@ impl GetBytesMut for [u8] {
 pub struct Value<B, V>
 where
     B: GetBytesMut,
+    V: ?Sized + HasDrop,
 {
     pub(crate) bytes: ManuallyDrop<B>,
     pub(crate) type_id: TypeId,
-    pub(crate) vtable: Rc<(DropFn, V)>,
+    pub(crate) vtable: Rc<V>,
 }
 
 //pub type SmallValue<V> = Value<usize, V>;
@@ -203,7 +246,7 @@ impl<V> SmallValue<V> {
         value.try_into_usize().map(|usized_value| Value {
             bytes: ManuallyDrop::new(usized_value),
             type_id: TypeId::of::<T>(),
-            vtable: Rc::new((T::drop_bytes, V::build_vtable())),
+            vtable: Rc::new(V::build_vtable()),
         })
     }
     /// Create a new `SmallValue` from a `usize` and an associated `TypeId`.
@@ -226,7 +269,7 @@ impl<V> SmallValue<V> {
 }
 */
 
-impl<V> BoxValue<V> {
+impl<V: HasDrop> BoxValue<V> {
     #[inline]
     pub fn new<T: Any + DropBytes>(value: T) -> Value<Box<[u8]>, V>
     where
@@ -235,9 +278,12 @@ impl<V> BoxValue<V> {
         Value {
             bytes: ManuallyDrop::new(Bytes::box_into_box_bytes(Box::new(value))),
             type_id: TypeId::of::<T>(),
-            vtable: Rc::new((T::drop_bytes, V::build_vtable())),
+            vtable: Rc::new(V::build_vtable()),
         }
     }
+}
+
+impl<V: ?Sized + HasDrop> BoxValue<V> {
     /// Create a new `SmallValue` from boxed bytes and an associated `TypeId`.
     ///
     /// # Safety
@@ -247,7 +293,7 @@ impl<V> BoxValue<V> {
     pub(crate) unsafe fn from_raw_parts(
         bytes: Box<[u8]>,
         type_id: TypeId,
-        vtable: Rc<(DropFn, V)>,
+        vtable: Rc<V>,
     ) -> Value<Box<[u8]>, V> {
         Value {
             bytes: ManuallyDrop::new(bytes),
@@ -275,7 +321,7 @@ impl<V> BoxValue<V> {
     }
 
     #[inline]
-    pub fn upcast<U: From<V>>(self) -> BoxValue<U>
+    pub fn upcast<U: HasDrop + From<V>>(self) -> BoxValue<U>
     where
         V: Clone,
     {
@@ -284,32 +330,30 @@ impl<V> BoxValue<V> {
         Value {
             bytes: md.bytes.clone(),
             type_id: md.type_id,
-            vtable: Rc::new((md.vtable.0, U::from(md.vtable.1.clone()))),
+            vtable: Rc::new(U::from((*md.vtable).clone())),
         }
     }
 }
 
-impl<B: GetBytesMut, V: HasDebug> fmt::Debug for Value<B, V> {
+impl<B: GetBytesMut, V: ?Sized + HasDebug + HasDrop> fmt::Debug for Value<B, V> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        unsafe { self.vtable.1.fmt_fn()(self.bytes.get_bytes_ref(), f) }
+        unsafe { self.vtable.fmt_fn()(self.bytes.get_bytes_ref(), f) }
     }
 }
 
-impl<V: HasClone> Clone for Value<Box<[u8]>, V> {
+impl<V: ?Sized + HasClone + HasDrop> Clone for Value<Box<[u8]>, V> {
     #[inline]
     fn clone(&self) -> Value<Box<[u8]>, V> {
         Value {
-            bytes: ManuallyDrop::new(unsafe {
-                self.vtable.1.clone_fn()(self.bytes.get_bytes_ref())
-            }),
+            bytes: ManuallyDrop::new(unsafe { self.vtable.clone_fn()(self.bytes.get_bytes_ref()) }),
             type_id: self.type_id,
             vtable: Rc::clone(&self.vtable),
         }
     }
 }
 
-impl<B: GetBytesMut, V> Drop for Value<B, V> {
+impl<B: GetBytesMut, V: ?Sized + HasDrop> Drop for Value<B, V> {
     #[inline]
     fn drop(&mut self) {
         unsafe {
@@ -319,20 +363,20 @@ impl<B: GetBytesMut, V> Drop for Value<B, V> {
     }
 }
 
-impl<B: GetBytesMut, V: HasPartialEq> PartialEq for Value<B, V> {
+impl<B: GetBytesMut, V: ?Sized + HasDrop + HasPartialEq> PartialEq for Value<B, V> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        unsafe { self.vtable.1.eq_fn()(self.bytes.get_bytes_ref(), other.bytes.get_bytes_ref()) }
+        unsafe { self.vtable.eq_fn()(self.bytes.get_bytes_ref(), other.bytes.get_bytes_ref()) }
     }
 }
 
-impl<B: GetBytesMut, V: HasPartialEq> Eq for Value<B, V> {}
+impl<B: GetBytesMut, V: ?Sized + HasDrop + HasPartialEq> Eq for Value<B, V> {}
 
-impl<B: GetBytesMut, V: HasHash> Hash for Value<B, V> {
+impl<B: GetBytesMut, V: ?Sized + HasDrop + HasHash> Hash for Value<B, V> {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         unsafe {
-            self.vtable.1.hash_fn()(self.bytes.get_bytes_ref(), state);
+            self.vtable.hash_fn()(self.bytes.get_bytes_ref(), state);
         }
     }
 }
@@ -363,11 +407,11 @@ impl<T: DropBytes, V: VTable<T>> VTable<T> for (DropFn, V) {
     }
 }
 
-impl<B: GetBytes, V> Value<B, V> {
+impl<B: GetBytes, V: ?Sized + HasDrop> Value<B, V> {
     impl_value_base!();
 }
 
-impl<V> Value<Box<[u8]>, V> {
+impl<V: ?Sized + HasDrop> Value<Box<[u8]>, V> {
     /// Downcast this value reference into a boxed `T` type. Return `None` if the downcast fails.
     #[inline]
     pub fn downcast<T: 'static>(self) -> Option<Box<T>> {
@@ -382,7 +426,7 @@ impl<V> Value<Box<[u8]>, V> {
     }
 }
 
-impl<V> Value<usize, V> {
+impl<V: ?Sized + HasDrop> Value<usize, V> {
     /// Downcast this value reference into a boxed `T` type. Return `None` if the downcast fails.
     #[inline]
     pub fn downcast<T: 'static>(self) -> Option<T> {
@@ -417,6 +461,14 @@ impl<'a, V: Clone + ?Sized> VTableRef<'a, V> {
             VTableRef::Ref(v) => v.clone(),
             VTableRef::Box(v) => *v,
             VTableRef::Rc(v) => Rc::try_unwrap(v).unwrap_or_else(|v| (*v).clone()),
+        }
+    }
+    #[inline]
+    pub fn into_rc(self) -> Rc<V> {
+        match self {
+            VTableRef::Ref(v) => Rc::new(v.clone()),
+            VTableRef::Box(v) => Rc::from(v),
+            VTableRef::Rc(v) => Rc::clone(&v),
         }
     }
 }
@@ -463,13 +515,16 @@ impl<'a, V: ?Sized> AsRef<V> for VTableRef<'a, V> {
 
 /// A generic value reference into a buffer.
 #[derive(Clone)]
-pub struct ValueRef<'a, V> {
+pub struct ValueRef<'a, V>
+where
+    V: ?Sized + HasDrop,
+{
     pub(crate) bytes: &'a [u8],
     pub(crate) type_id: TypeId,
-    pub(crate) vtable: VTableRef<'a, (DropFn, V)>,
+    pub(crate) vtable: VTableRef<'a, V>,
 }
 
-impl<'a, V: HasHash> Hash for ValueRef<'a, V> {
+impl<'a, V: ?Sized + HasHash + HasDrop> Hash for ValueRef<'a, V> {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         unsafe {
@@ -478,14 +533,14 @@ impl<'a, V: HasHash> Hash for ValueRef<'a, V> {
     }
 }
 
-impl<'a, V: HasDebug> fmt::Debug for ValueRef<'a, V> {
+impl<'a, V: ?Sized + HasDebug + HasDrop> fmt::Debug for ValueRef<'a, V> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         unsafe { self.vtable.as_ref().fmt_fn()(self.bytes.get_bytes_ref(), f) }
     }
 }
 
-impl<'a, V: HasPartialEq> PartialEq for ValueRef<'a, V> {
+impl<'a, V: ?Sized + HasPartialEq + HasDrop> PartialEq for ValueRef<'a, V> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         unsafe {
@@ -494,11 +549,9 @@ impl<'a, V: HasPartialEq> PartialEq for ValueRef<'a, V> {
     }
 }
 
-impl<'a, V: HasEq> Eq for ValueRef<'a, V> {}
+impl<'a, V: ?Sized + HasEq + HasDrop> Eq for ValueRef<'a, V> {}
 
-impl<'a, V> ValueRef<'a, V> {
-    impl_value_base!();
-
+impl<'a, V: HasDrop> ValueRef<'a, V> {
     /// Create a new `ValueRef` from a typed reference.
     #[inline]
     pub fn new<T: Any + DropBytes>(typed: &'a T) -> ValueRef<'a, V>
@@ -509,9 +562,13 @@ impl<'a, V> ValueRef<'a, V> {
         ValueRef {
             bytes: typed.as_bytes(),
             type_id: TypeId::of::<T>(),
-            vtable: VTableRef::Box(Box::new((T::drop_bytes, V::build_vtable()))),
+            vtable: VTableRef::Box(Box::new(V::build_vtable())),
         }
     }
+}
+
+impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
+    impl_value_base!();
 
     /// Create a new `ValueRef` from a slice of bytes and an associated `TypeId`.
     ///
@@ -522,7 +579,7 @@ impl<'a, V> ValueRef<'a, V> {
     pub(crate) unsafe fn from_raw_parts(
         bytes: &'a [u8],
         type_id: TypeId,
-        vtable: impl Into<VTableRef<'a, (DropFn, V)>>,
+        vtable: impl Into<VTableRef<'a, V>>,
     ) -> ValueRef<'a, V> {
         ValueRef {
             bytes,
@@ -555,7 +612,19 @@ impl<'a, V> ValueRef<'a, V> {
     }
 
     #[inline]
-    pub fn upcast<U: From<V>>(&self) -> ValueRef<U>
+    pub fn upcast<U: ?Sized + HasDrop + From<V>>(self) -> ValueRef<'a, U>
+    where
+        V: Clone,
+    {
+        ValueRef {
+            bytes: self.bytes,
+            type_id: self.type_id,
+            vtable: VTableRef::Box(Box::new(U::from(self.vtable.take()))),
+        }
+    }
+
+    #[inline]
+    pub fn upcast_ref<U: ?Sized + HasDrop + From<V>>(&self) -> ValueRef<U>
     where
         V: Clone,
     {
@@ -563,26 +632,29 @@ impl<'a, V> ValueRef<'a, V> {
         ValueRef {
             bytes: self.bytes,
             type_id: self.type_id,
-            vtable: VTableRef::Box(Box::new((vtable.0, U::from(vtable.1.clone())))),
+            vtable: VTableRef::Box(Box::new(U::from((*vtable).clone()))),
         }
     }
 }
 
 /// A generic mutable value reference into a buffer.
-pub struct ValueMut<'a, V> {
+pub struct ValueMut<'a, V>
+where
+    V: ?Sized + HasDrop,
+{
     pub(crate) bytes: &'a mut [u8],
     pub(crate) type_id: TypeId,
-    pub(crate) vtable: VTableRef<'a, (DropFn, V)>,
+    pub(crate) vtable: VTableRef<'a, V>,
 }
 
-impl<'a, V: HasDebug> fmt::Debug for ValueMut<'a, V> {
+impl<'a, V: ?Sized + HasDebug + HasDrop> fmt::Debug for ValueMut<'a, V> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         unsafe { self.vtable.as_ref().fmt_fn()(self.bytes, f) }
     }
 }
 
-impl<'a, V: HasPartialEq> PartialEq for ValueMut<'a, V> {
+impl<'a, V: ?Sized + HasPartialEq + HasDrop> PartialEq for ValueMut<'a, V> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         unsafe {
@@ -591,11 +663,9 @@ impl<'a, V: HasPartialEq> PartialEq for ValueMut<'a, V> {
     }
 }
 
-impl<'a, V: HasEq> Eq for ValueMut<'a, V> {}
+impl<'a, V: ?Sized + HasEq + HasDrop> Eq for ValueMut<'a, V> {}
 
-impl<'a, V> ValueMut<'a, V> {
-    impl_value_base!();
-
+impl<'a, V: HasDrop> ValueMut<'a, V> {
     /// Create a new `ValueRef` from a typed reference.
     #[inline]
     pub fn new<T: Any>(typed: &'a mut T) -> ValueMut<'a, V>
@@ -605,9 +675,13 @@ impl<'a, V> ValueMut<'a, V> {
         ValueMut {
             bytes: typed.as_bytes_mut(),
             type_id: TypeId::of::<T>(),
-            vtable: VTableRef::Box(Box::new((T::drop_bytes, V::build_vtable()))),
+            vtable: VTableRef::Box(Box::new(V::build_vtable())),
         }
     }
+}
+
+impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
+    impl_value_base!();
 
     /// Swap the values between `other` and `self`.
     #[inline]
@@ -646,7 +720,7 @@ impl<'a, V> ValueMut<'a, V> {
     pub(crate) unsafe fn from_raw_parts(
         bytes: &'a mut [u8],
         type_id: TypeId,
-        vtable: impl Into<VTableRef<'a, (DropFn, V)>>,
+        vtable: impl Into<VTableRef<'a, V>>,
     ) -> ValueMut<'a, V> {
         ValueMut {
             bytes,
@@ -663,15 +737,14 @@ impl<'a, V> ValueMut<'a, V> {
     }
 
     #[inline]
-    pub fn upcast<U: From<V>>(&mut self) -> ValueMut<U>
+    pub fn upcast<U: ?Sized + HasDrop + From<V>>(&mut self) -> ValueMut<U>
     where
         V: Clone,
     {
-        let vtable = self.vtable.as_ref();
         ValueMut {
             bytes: self.bytes,
             type_id: self.type_id,
-            vtable: VTableRef::Box(Box::new((vtable.0, U::from(vtable.1.clone())))),
+            vtable: VTableRef::Box(Box::new(U::from((*self.vtable).clone()))),
         }
     }
 }
@@ -838,7 +911,7 @@ impl<'a, V: ?Sized> CopyValueMut<'a, V> {
  * Valid conversions.
  */
 
-impl<'a, V> From<ValueMut<'a, V>> for ValueRef<'a, V> {
+impl<'a, V: HasDrop> From<ValueMut<'a, V>> for ValueRef<'a, V> {
     #[inline]
     fn from(v: ValueMut<'a, V>) -> ValueRef<'a, V> {
         ValueRef {
@@ -849,7 +922,7 @@ impl<'a, V> From<ValueMut<'a, V>> for ValueRef<'a, V> {
     }
 }
 
-impl<'a, V> From<CopyValueMut<'a, V>> for CopyValueRef<'a, V> {
+impl<'a, V: HasDrop> From<CopyValueMut<'a, V>> for CopyValueRef<'a, V> {
     #[inline]
     fn from(v: CopyValueMut<'a, V>) -> CopyValueRef<'a, V> {
         CopyValueRef {
@@ -865,9 +938,9 @@ impl<'a, V> From<CopyValueMut<'a, V>> for CopyValueRef<'a, V> {
 /// This enables the following two conversions.
 unsafe fn drop_copy(_: &mut [u8]) {}
 
-impl<'a, V: Clone> From<CopyValueMut<'a, V>> for ValueMut<'a, V> {
+impl<'a, V: Any + Clone> From<CopyValueMut<'a, V>> for ValueMut<'a, (DropFn, V)> {
     #[inline]
-    fn from(v: CopyValueMut<'a, V>) -> ValueMut<'a, V> {
+    fn from(v: CopyValueMut<'a, V>) -> ValueMut<'a, (DropFn, V)> {
         ValueMut {
             bytes: v.bytes,
             type_id: v.type_id,
@@ -876,9 +949,9 @@ impl<'a, V: Clone> From<CopyValueMut<'a, V>> for ValueMut<'a, V> {
     }
 }
 
-impl<'a, V: Clone> From<CopyValueRef<'a, V>> for ValueRef<'a, V> {
+impl<'a, V: Any + Clone> From<CopyValueRef<'a, V>> for ValueRef<'a, (DropFn, V)> {
     #[inline]
-    fn from(v: CopyValueRef<'a, V>) -> ValueRef<'a, V> {
+    fn from(v: CopyValueRef<'a, V>) -> ValueRef<'a, (DropFn, V)> {
         ValueRef {
             bytes: v.bytes,
             type_id: v.type_id,

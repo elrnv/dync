@@ -22,6 +22,7 @@ mod slice_drop;
 mod vec_copy;
 mod vec_drop;
 
+pub use downcast_rs as downcast;
 pub use dync_derive::dync_trait;
 pub use index_slice::*;
 pub use slice_copy::*;
@@ -30,19 +31,87 @@ pub use value::*;
 pub use vec_copy::*;
 pub use vec_drop::*;
 
+/// Convert a given container with a dynamic vtable to a concrete type.
+///
+/// This macro will panic if the conversion fails.
+#[macro_export]
+macro_rules! from_dyn {
+    (SliceDrop < dyn $trait:path as $vtable:path >) => {{
+        from_dyn![@slice SliceDrop < dyn $trait as $vtable >]
+    }};
+    (SliceDropMut < dyn $trait:path as $vtable:path >) => {{
+        from_dyn![@slice SliceDropMut < dyn $trait as $vtable >]
+    }};
+    (VecDrop < dyn $trait:path as $vtable:path >) => {{
+        from_dyn![@owned VecDrop < dyn $trait as $vtable >]
+    }};
+    (SliceCopy < dyn $trait:path as $vtable:path >) => {{
+        from_dyn![@slice SliceCopy < dyn $trait as $vtable >]
+    }};
+    (SliceCopyMut < dyn $trait:path as $vtable:path >) => {{
+        from_dyn![@slice SliceCopyMut < dyn $trait as $vtable >]
+    }};
+    (VecCopy < dyn $trait:path as $vtable:path >) => {{
+        from_dyn![@owned VecCopy < dyn $trait as $vtable >]
+    }};
+    (@owned $vec:ident < dyn $trait:path as $vtable:path>) => {{
+        fn from_dyn<V: $trait>(vec: $crate::$vec<dyn $trait>) -> $crate::$vec<V> {
+            unsafe {
+                let (data, size, id, vtable) = vec.into_raw_parts();
+                let updated_vtable: std::rc::Rc<V> = vtable.downcast_rc().ok().unwrap();
+                $vec::from_raw_parts(data, size, id, updated_vtable)
+            }
+        }
+
+        from_dyn::<$vtable>
+    }};
+    (@slice $slice:ident < dyn $trait:path >) => {{
+        fn from_dyn<'a, V: ?Sized + HasDrop + std::any::Any>(slice: $crate::$slice<'a, V>) -> $crate::$slice<'a, $vtable> {
+            unsafe {
+                let (data, size, id, vtable) = slice.into_raw_parts();
+                match vtable {
+                    $crate::VTableRef::Ref(v) => {
+                        let updated_vtable: &$vtable = v.downcast_ref().unwrap();
+                        $slice::from_raw_parts(data, size, id, updated_vtable)
+                    }
+                    $crate::VTableRef::Box(v) => {
+                        let updated_vtable: Box<$vtable> = v.downcast().unwrap();
+                        $slice::from_raw_parts(data, size, id, updated_vtable)
+                    }
+                    $crate::VTableRef::Rc(v) => {
+                        let updated_vtable: std::rc::Rc<$vtable> = v.downcast().unwrap();
+                        $slice::from_raw_parts(data, size, id, updated_vtable)
+                    }
+                }
+            }
+        }
+
+        from_dyn
+    }};
+}
+
 /// Convert a given container type (e.g. `VecCopy` or `SliceDyn`) to have a dynamic VTable.
 #[macro_export]
 macro_rules! into_dyn {
-    (SliceCopy < dyn $trait:path >) => {{
+    (SliceDrop < dyn $trait:path >) => {{
+        into_dyn![@slice SliceDrop < dyn $trait >]
+    }};
+    (SliceDropMut < dyn $trait:ident >) => {{
+        into_dyn![@slice SliceDropMut < dyn $trait >]
+    }};
+    (VecDrop < dyn $trait:ident >) => {{
+        into_dyn![@owned VecDrop < dyn $trait >]
+    }};
+    (SliceCopy < dyn $trait:ident >) => {{
         into_dyn![@slice SliceCopy < dyn $trait >]
     }};
-    (SliceCopyMut < dyn $trait:path >) => {{
+    (SliceCopyMut < dyn $trait:ident >) => {{
         into_dyn![@slice SliceCopyMut < dyn $trait >]
     }};
-    (VecCopy < dyn $trait:path >) => {{
+    (VecCopy < dyn $trait:ident >) => {{
         into_dyn![@owned VecCopy < dyn $trait >]
     }};
-    (@owned $vec:ident < dyn $trait:path >) => {{
+    (@owned $vec:ident < dyn $trait:ident >) => {{
         fn into_dyn<V: 'static + $trait>(vec: $crate::$vec<V>) -> $crate::$vec<dyn $trait> {
             unsafe {
                 let (data, size, id, vtable) = vec.into_raw_parts();

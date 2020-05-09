@@ -3,7 +3,7 @@ use std::any::Any;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::prelude::*;
 
-use dync::{dync_trait, into_dyn, VecCopy, VecDrop};
+use dync::{dync_trait, into_dyn, traits::HasDrop, VecCopy, VecDrop};
 
 static SEED: [u8; 32] = [3; 32];
 
@@ -86,7 +86,7 @@ fn vec_copy_compute<V>(v: &mut VecCopy<V>) {
 }
 
 #[inline]
-fn vec_drop_compute<V: Clone>(v: &mut VecDrop<V>) {
+fn vec_drop_compute<V: Clone + HasDrop>(v: &mut VecDrop<V>) {
     for a in v.iter_mut() {
         let a = a.downcast::<[i64; 3]>().unwrap();
         let res = compute(a[0], a[1], a[2]);

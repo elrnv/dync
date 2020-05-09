@@ -1,5 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
+use heck::*;
+use lazy_static::lazy_static;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, TokenStreamExt};
 use syn::parse::{Parse, ParseStream};
@@ -7,7 +9,7 @@ use syn::punctuated::Punctuated;
 use syn::*;
 
 type GenericsMap = HashMap<Ident, Punctuated<TypeParamBound, Token![+]>>;
-type ImplMap = HashMap<Path, (Path, Vec<(Path, Ident)>)>;
+type TraitMap = HashMap<Trait, TraitData>;
 
 #[derive(Debug)]
 struct Config {
@@ -61,54 +63,176 @@ impl Parse for Config {
     }
 }
 
-/// A table of predefined VTables for std traits
-fn builtin_impls(crate_name: &str) -> ImplMap {
-    let crate_name = Ident::new(crate_name, Span::call_site());
-    vec![
-        (
-            parse_quote! { Clone },
-            vec![
-                ("CloneFn", "clone_fn"),
-                ("CloneFromFn", "clone_from_fn"),
-                ("CloneIntoRawFn", "clone_into_raw_fn"),
-            ],
-        ),
-        (parse_quote! { PartialEq }, vec![("EqFn", "eq_fn")]),
-        (parse_quote! { Eq }, vec![]),
-        (
-            parse_quote! { std::hash::Hash },
-            vec![("HashFn", "hash_fn")],
-        ),
-        (parse_quote! { std::fmt::Debug }, vec![("FmtFn", "fmt_fn")]),
-    ]
-    .into_iter()
-    .map(|(trait_path, fns): (Path, Vec<(&str, &str)>)| {
-        let fns = fns
-            .into_iter()
-            .map(|(fn_ty, fn_name)| {
-                let fn_ty = Ident::new(fn_ty, Span::call_site());
-                let fn_name = Ident::new(fn_name, Span::call_site());
-                (parse_quote! { #fn_ty }, fn_name)
-            })
-            .collect();
-
-        let seg = trait_path.segments.last().unwrap();
-        let trait_name = &seg.ident;
-        let vtable_name = Ident::new(&format!("{}VTable", &trait_name), Span::call_site());
-        (
-            trait_path,
-            (parse_quote! { #crate_name::traits::#vtable_name }, fns),
-        )
-    })
-    .collect()
+#[derive(Clone, Debug, PartialEq)]
+struct TraitData {
+    pub path: String,
+    pub methods: Vec<TraitMethod>,
+    pub super_traits: BTreeSet<Trait>,
 }
 
-fn builtin_trait_inheritance() -> HashMap<Path, HashSet<Path>> {
-    let mut trait_inheritance: HashMap<Path, HashSet<Path>> = HashMap::new();
-    let mut eq = HashSet::new();
-    eq.insert(parse_quote! { PartialEq });
-    trait_inheritance.insert(parse_quote! { Eq }, eq);
-    trait_inheritance
+impl TraitData {
+    fn path(&self) -> Path {
+        syn::parse_str(&self.path).unwrap()
+    }
+    fn has_trait(&self) -> Ident {
+        let path = self.path();
+        let name = path.segments.last().unwrap().ident.clone();
+        Ident::new(&format!("Has{}", name), Span::call_site())
+    }
+    fn bytes_trait(&self) -> Ident {
+        let path = self.path();
+        let name = path.segments.last().unwrap().ident.clone();
+        Ident::new(&format!("{}Bytes", name), Span::call_site())
+    }
+    fn vtable_name(&self) -> Ident {
+        let path = self.path();
+        let seg = path.segments.last().unwrap();
+        let trait_name = &seg.ident;
+        Ident::new(&format!("{}VTable", &trait_name), Span::call_site())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct TraitMethod {
+    pub name: String,
+}
+
+impl TraitMethod {
+    fn new(mut name: &str) -> Self {
+        if name.ends_with("_fn") {
+            name = &name[..name.len() - 3];
+        }
+        TraitMethod {
+            name: name.to_string(),
+        }
+    }
+    fn fn_type(&self) -> Ident {
+        Ident::new(
+            &format!("{}Fn", self.name.to_camel_case()),
+            Span::call_site(),
+        )
+    }
+    fn bytes_fn(&self) -> Ident {
+        Ident::new(
+            &format!("{}_bytes", self.name.to_snek_case()),
+            Span::call_site(),
+        )
+    }
+    fn has_fn(&self) -> Ident {
+        Ident::new(
+            &format!("{}_fn", self.name.to_snek_case()),
+            Span::call_site(),
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
+enum Trait {
+    Drop,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Debug,
+    Custom(String),
+}
+
+impl Trait {
+    fn prefix(&self, crate_name: &str) -> TokenStream {
+        if BUILTINS.contains_key(self) {
+            let crate_name = Ident::new(crate_name, Span::call_site());
+            quote! { #crate_name::traits:: }
+        } else {
+            TokenStream::new()
+        }
+    }
+}
+
+impl From<String> for Trait {
+    fn from(s: String) -> Trait {
+        match s.as_str() {
+            "Drop" | "std::ops::Drop" => Trait::Drop,
+            "Clone" | "std::clone::Clone" => Trait::Clone,
+            "PartialEq" | "std::cmp::PartialEq" => Trait::PartialEq,
+            "Eq" | "std::cmp::Eq" => Trait::Eq,
+            "Hash" | "std::hash::Hash" => Trait::Hash,
+            "Debug" | "std::fmt::Debug" => Trait::Debug,
+            x => Trait::Custom(x.to_string()),
+        }
+    }
+}
+
+impl<'a> From<Path> for Trait {
+    fn from(p: Path) -> Trait {
+        match p {
+            x if x == parse_quote! { Drop } => Trait::Drop,
+            x if x == parse_quote! { Clone } => Trait::Clone,
+            x if x == parse_quote! { PartialEq } => Trait::PartialEq,
+            x if x == parse_quote! { Eq } => Trait::Eq,
+            x if x == parse_quote! { std::hash::Hash } => Trait::Hash,
+            x if x == parse_quote! { std::fmt::Debug } => Trait::Debug,
+            x => Trait::Custom(format!("{}", quote! { #x })),
+        }
+    }
+}
+
+lazy_static! {
+    static ref BUILTINS: HashMap<Trait, TraitData> = {
+        let mut m = HashMap::new();
+        m.insert(
+            Trait::Drop,
+            TraitData {
+                path: "Drop".to_string(),
+                methods: vec![TraitMethod::new("drop")],
+                super_traits: BTreeSet::new(),
+            },
+        );
+        m.insert(
+            Trait::Clone,
+            TraitData {
+                path: "Clone".to_string(),
+                methods: vec![
+                    TraitMethod::new("clone"),
+                    TraitMethod::new("clone_from"),
+                    TraitMethod::new("clone_into_raw"),
+                ],
+                super_traits: BTreeSet::new(),
+            },
+        );
+        m.insert(
+            Trait::PartialEq,
+            TraitData {
+                path: "PartialEq".to_string(),
+                methods: vec![TraitMethod::new("eq")],
+                super_traits: BTreeSet::new(),
+            },
+        );
+        m.insert(
+            Trait::Eq,
+            TraitData {
+                path: "Eq".to_string(),
+                methods: vec![],
+                super_traits: [Trait::PartialEq].iter().cloned().collect(),
+            },
+        );
+        m.insert(
+            Trait::Hash,
+            TraitData {
+                path: "std::hash::Hash".to_string(),
+                methods: vec![TraitMethod::new("hash")],
+                super_traits: BTreeSet::new(),
+            },
+        );
+        m.insert(
+            Trait::Debug,
+            TraitData {
+                path: "std::fmt::Debug".to_string(),
+                methods: vec![TraitMethod::new("fmt")],
+                super_traits: BTreeSet::new(),
+            },
+        );
+        m
+    };
 }
 
 #[proc_macro_attribute]
@@ -123,25 +247,20 @@ pub fn dync_mod(
 
     validate_item_mod(&item_mod);
 
-    let mut impls = builtin_impls(&config.dync_crate_name);
+    let mut trait_map = BUILTINS.clone();
 
-    let mut trait_inheritance = builtin_trait_inheritance();
+    fill_and_flatten_trait_map_from_mod(&item_mod, &mut trait_map);
 
-    fill_inheritance_from_mod(&item_mod, &mut trait_inheritance);
+    fill_drop_for_inheritance(&mut trait_map);
 
-    fill_inherited_impls(&mut impls, &config, &trait_inheritance);
+    //fill_inherited_impls(&mut impls, &config, &trait_inheritance);
 
     let mut dync_items = Vec::new();
 
     for item in item_mod.content.as_ref().unwrap().1.iter() {
         match item {
             Item::Trait(item_trait) => {
-                dync_items.append(&mut construct_dync_items(
-                    &item_trait,
-                    &config,
-                    &impls,
-                    &trait_inheritance,
-                ));
+                dync_items.append(&mut construct_dync_items(&item_trait, &config, &trait_map));
             }
             _ => {}
         }
@@ -162,34 +281,31 @@ fn validate_item_mod(item_mod: &ItemMod) {
     );
 }
 
-fn fill_inherited_impls(
-    impls: &mut ImplMap,
-    config: &Config,
-    trait_inheritance: &HashMap<Path, HashSet<Path>>,
-) {
-    for (trait_path, _) in trait_inheritance.iter() {
-        let seg = trait_path.segments.last().unwrap();
-        let trait_name = &seg.ident;
-        let vtable_name = Ident::new(
-            &format!("{}{}", &trait_name, &config.suffix),
-            Span::call_site(),
-        );
-        // TODO: Construct the trait functions.
-        impls
-            .entry(trait_path.clone())
-            .or_insert_with(|| (parse_quote! { #vtable_name }, vec![]));
-    }
-}
+//fn fill_inherited_impls(
+//    impls: &mut ImplMap,
+//    config: &Config,
+//    trait_inheritance: &InheritMap,
+//) {
+//    for (trait_path, _) in trait_inheritance.iter() {
+//        let seg = trait_path.segments.last().unwrap();
+//        let trait_name = &seg.ident;
+//        let vtable_name = Ident::new(
+//            &format!("{}{}", &trait_name, &config.suffix),
+//            Span::call_site(),
+//        );
+//        // TODO: Construct the trait functions.
+//        impls
+//            .entry(trait_path.clone())
+//            .or_insert_with(|| (parse_quote! { #vtable_name }, vec![]));
+//    }
+//}
 
-fn fill_inheritance_from_mod(
-    item_mod: &ItemMod,
-    trait_inheritance: &mut HashMap<Path, HashSet<Path>>,
-) {
+fn fill_and_flatten_trait_map_from_mod(item_mod: &ItemMod, trait_map: &mut TraitMap) {
     // First we fill out all traits we know with their supertraits.
     for item in item_mod.content.as_ref().unwrap().1.iter() {
         match item {
             Item::Trait(item_trait) => {
-                fill_inheritance_from_item_trait(&item_trait, trait_inheritance);
+                fill_trait_map_from_item_trait(&item_trait, trait_map);
             }
             _ => {}
         }
@@ -199,22 +315,28 @@ fn fill_inheritance_from_mod(
     for item in item_mod.content.as_ref().unwrap().1.iter() {
         match item {
             Item::Trait(item_trait) => {
-                flatten_inheritance(&item_trait, trait_inheritance);
+                flatten_inheritance(&item_trait, trait_map);
             }
             _ => {}
         }
     }
 }
 
-fn fill_inheritance_from_item_trait(
-    item_trait: &ItemTrait,
-    trait_inheritance: &mut HashMap<Path, HashSet<Path>>,
-) {
-    let trait_name = item_trait.ident.clone();
-    trait_inheritance
-        .entry(parse_quote! { #trait_name })
+// Add the drop trait to everything, so that the drop function will always be included.
+fn fill_drop_for_inheritance(trait_map: &mut TraitMap) {
+    for (trait_key, trait_data) in trait_map.iter_mut() {
+        if !matches!(trait_key, &Trait::Drop) {
+            trait_data.super_traits.insert(Trait::Drop);
+        }
+    }
+}
+
+fn fill_trait_map_from_item_trait(item_trait: &ItemTrait, trait_map: &mut TraitMap) {
+    let trait_name = item_trait.ident.to_string();
+    trait_map
+        .entry(Trait::from(trait_name.clone()))
         .or_insert_with(|| {
-            item_trait
+            let super_traits: BTreeSet<Trait> = item_trait
                 .supertraits
                 .iter()
                 .filter_map(|bound| {
@@ -230,7 +352,7 @@ fn fill_inheritance_from_item_trait(
                                 .iter()
                                 .all(|seg| seg.arguments.is_empty())
                             {
-                                Some(bound.path.clone())
+                                Some(Trait::from(bound.path.clone()))
                             } else {
                                 None
                             }
@@ -239,37 +361,37 @@ fn fill_inheritance_from_item_trait(
                         None
                     }
                 })
-                .collect()
+                .collect();
+            TraitData {
+                path: trait_name,
+                methods: vec![], // TODO: implement loading trait methods.
+                super_traits,
+            }
         });
 }
 
-fn flatten_inheritance(
-    item_trait: &ItemTrait,
-    trait_inheritance: &mut HashMap<Path, HashSet<Path>>,
-) {
-    let trait_name = item_trait.ident.clone();
-    let trait_path: Path = parse_quote! { #trait_name };
-    let supers = trait_inheritance.remove(&trait_path).unwrap();
-    let supers = supers
+fn flatten_inheritance(item_trait: &ItemTrait, trait_map: &mut TraitMap) {
+    let trait_name = &item_trait.ident;
+    let trait_key = Trait::from(trait_name.to_string());
+    let mut trait_data = trait_map.remove(&trait_key).unwrap();
+    trait_data.super_traits = trait_data
+        .super_traits
         .into_iter()
         .flat_map(|super_trait| {
-            union_children(&super_trait, trait_inheritance)
+            union_children(&super_trait, trait_map)
                 .into_iter()
                 .chain(std::iter::once(super_trait.clone()))
         })
         .collect();
-    assert!(trait_inheritance.insert(trait_path, supers).is_none());
+    assert!(trait_map.insert(trait_key, trait_data).is_none());
 }
 
-fn union_children(
-    trait_path: &Path,
-    trait_inheritance: &HashMap<Path, HashSet<Path>>,
-) -> HashSet<Path> {
-    let mut res = HashSet::new();
-    if let Some(supers) = trait_inheritance.get(&trait_path) {
-        res.extend(supers.iter().cloned());
-        for super_trait in supers.iter() {
-            res.extend(union_children(super_trait, trait_inheritance).into_iter());
+fn union_children(trait_key: &Trait, trait_map: &TraitMap) -> BTreeSet<Trait> {
+    let mut res = BTreeSet::new();
+    if let Some(trait_data) = trait_map.get(trait_key) {
+        res.extend(trait_data.super_traits.iter().cloned());
+        for super_trait in trait_data.super_traits.iter() {
+            res.extend(union_children(super_trait, trait_map).into_iter());
         }
     }
     res
@@ -287,15 +409,15 @@ pub fn dync_trait(
 
     validate_item_trait(&item_trait);
 
-    let mut impls = builtin_impls(&config.dync_crate_name);
+    let mut trait_map = BUILTINS.clone();
 
-    let mut trait_inheritance = builtin_trait_inheritance();
+    fill_trait_map_from_item_trait(&item_trait, &mut trait_map);
 
-    fill_inheritance_from_item_trait(&item_trait, &mut trait_inheritance);
+    fill_drop_for_inheritance(&mut trait_map);
 
-    fill_inherited_impls(&mut impls, &config, &trait_inheritance);
+    //fill_inherited_impls(&mut impls, &config, &trait_inheritance);
 
-    let dync_items = construct_dync_items(&item_trait, &config, &impls, &trait_inheritance);
+    let dync_items = construct_dync_items(&item_trait, &config, &trait_map);
 
     let mut tokens = quote! { #item_trait };
     for item in dync_items.into_iter() {
@@ -316,102 +438,143 @@ fn validate_item_trait(item_trait: &ItemTrait) {
     );
 }
 
-fn construct_dync_items(
-    item_trait: &ItemTrait,
+fn vtable_struct_def(
+    trait_data: &TraitData,
+    vis: &Visibility,
     config: &Config,
-    impls: &ImplMap,
-    trait_inheritance: &HashMap<Path, HashSet<Path>>,
-) -> Vec<Item> {
-    let crate_name = Ident::new(&config.dync_crate_name, Span::call_site());
-
-    let trait_name = &item_trait.ident;
-    let trait_path: Path = parse_quote! { #trait_name };
-    let (vtable_path, _) = impls.get(&trait_path).unwrap();
-    let vtable_name = &vtable_path.segments.last().unwrap().ident;
-    let vis = item_trait.vis.clone();
-    let super_traits = trait_inheritance.get(&trait_path).unwrap();
+    trait_map: &TraitMap,
+) -> Item {
+    let vtable_name = trait_data.vtable_name();
 
     // The vtable is flattened.
-    let vtable_fields: Punctuated<Field, Token![,]> = super_traits
+    let vtable_fields: Punctuated<Field, Token![,]> = trait_data
+        .super_traits
         .iter()
-        .flat_map(|trait_path| {
-            impls.get(&trait_path).into_iter().flat_map(|(_, fns)| {
-                fns.iter().map(|(fn_type, _)| Field {
-                    attrs: Vec::new(),
-                    vis: Visibility::Inherited,
-                    ident: None,
-                    colon_token: None,
-                    ty: parse_quote! { #crate_name ::traits:: #fn_type },
+        .flat_map(|trait_key| {
+            trait_map
+                .get(&trait_key)
+                .into_iter()
+                .flat_map(move |trait_data| {
+                    let prefix = trait_key.prefix(&config.dync_crate_name);
+
+                    trait_data.methods.iter().map(move |method| {
+                        let fn_ty = method.fn_type();
+                        Field {
+                            attrs: Vec::new(),
+                            vis: Visibility::Inherited,
+                            ident: None,
+                            colon_token: None,
+                            ty: parse_quote! { #prefix #fn_ty },
+                        }
+                    })
                 })
-            })
         })
         .collect();
 
+    parse_quote! {
+        #[derive(Copy, Clone)]
+        #vis struct #vtable_name (#vtable_fields);
+    }
+}
+
+fn construct_dync_items(
+    item_trait: &ItemTrait,
+    config: &Config,
+    trait_map: &TraitMap,
+) -> Vec<Item> {
+    let vis = item_trait.vis.clone();
+    let crate_name = &config.dync_crate_name;
+
+    let trait_name = &item_trait.ident;
+    let trait_key = Trait::from(trait_name.to_string());
+    let trait_data = trait_map.get(&trait_key).unwrap(); // We should have already entered it.
+    let vtable_name = trait_data.vtable_name();
+
+    let vtable_def = vtable_struct_def(&trait_data, &vis, config, trait_map);
+    //eprintln!("{}", quote! { vtable_def });
+
+    // Construct HasTrait impls
     let mut has_impls: Vec<Item> = Vec::new();
+    let mut has_impl_deps: Punctuated<Path, Token![+]> = Punctuated::new();
 
     let mut fn_idx_usize = 0;
-    for trait_path in super_traits.iter() {
-        let impl_entry = impls.get(&trait_path);
+    for super_trait_key in trait_data.super_traits.iter() {
+        //dbg!(super_trait_key);
+        let impl_entry = trait_map.get(&super_trait_key);
         if impl_entry.is_none() {
             continue;
         }
-        let (_, fns) = impl_entry.unwrap();
+
+        let prefix = super_trait_key.prefix(crate_name);
+
+        let super_trait_data = impl_entry.unwrap();
         let mut methods = TokenStream::new();
-        for (fn_type, fn_name) in fns.iter() {
+        for method in super_trait_data.methods.iter() {
             let fn_idx = syn::Index::from(fn_idx_usize);
+            let fn_ty = method.fn_type();
+            let has_fn = method.has_fn();
             methods.append_all(quote! {
                 #[inline]
-                fn #fn_name ( &self ) -> &#crate_name ::traits:: #fn_type { &self.#fn_idx }
+                fn #has_fn ( &self ) -> &#prefix #fn_ty { &self.#fn_idx }
             });
             fn_idx_usize += 1;
         }
-        let supertrait_name = trait_path.segments.last().unwrap().ident.clone();
-        let has_trait = Ident::new(&format!("Has{}", supertrait_name), Span::call_site());
+
+        let has_trait = super_trait_data.has_trait();
 
         //eprintln!("{}", &methods);
 
-        if !trait_inheritance.contains_key(&trait_path) {
-            has_impls.push(parse_quote! {
-                impl #crate_name ::traits:: #has_trait for #vtable_name {
-                    #methods
-                }
-            })
-        }
+        has_impls.push(parse_quote! {
+            impl #prefix #has_trait for #vtable_name {
+                #methods
+            }
+        });
+        has_impl_deps.push(parse_quote! { #prefix #has_trait });
     }
 
-    let vtable_constructor = super_traits
+    // HasTrait for the current trait.
+    let has_trait = Ident::new(&format!("Has{}", trait_name.to_string()), Span::call_site());
+    has_impls.push(parse_quote! {
+        #vis trait #has_trait: #has_impl_deps {
+            // TODO: add has fns
+        }
+    });
+    has_impls.push(parse_quote! {
+        impl #has_trait for #vtable_name {
+            // TODO: add has fns impls
+        }
+    });
+
+    let vtable_constructor = trait_data
+        .super_traits
         .iter()
-        .flat_map(|trait_path| {
+        .flat_map(|super_trait_key| {
             let crate_name = &crate_name;
-            impls
-                .get(&trait_path)
+            trait_map
+                .get(&super_trait_key)
                 .into_iter()
-                .flat_map(move |(_, fns)| {
-                    let trait_ident = &trait_path.segments.last().unwrap().ident;
-                    let bytes_trait =
-                        Ident::new(&format!("{}Bytes", trait_ident), Span::call_site());
-                    fns.iter().map(move |(_, fn_name)| {
-                    let fn_name_string = fn_name.to_string();
-                    let bytes_fn = Ident::new(
-                        &format!("{}_bytes", &fn_name_string[..fn_name_string.len() - 3]),
-                        Span::call_site(),
-                    );
-                    let tuple: Expr =
-                        parse_quote! { <T as #crate_name ::traits:: #bytes_trait> :: #bytes_fn };
-                    //eprintln!("{}", quote! { #tuple });
-                    tuple
-                })
+                .flat_map(move |super_trait_data| {
+                    let prefix = super_trait_key.prefix(crate_name);
+                    let bytes_trait = super_trait_data.bytes_trait();
+                    super_trait_data.methods.iter().map(move |method| {
+                        let bytes_fn = method.bytes_fn();
+                        let tuple: Expr = parse_quote! { <T as #prefix #bytes_trait> :: #bytes_fn };
+                        //eprintln!("{}", quote! { #tuple });
+                        tuple
+                    })
                 })
         })
         .collect::<Punctuated<Expr, Token![,]>>();
 
+    let crate_name_ident = Ident::new(&crate_name, Span::call_site());
+
     let mut res = has_impls;
     res.push(parse_quote! {
-        #[derive(Copy, Clone)]
-        #vis struct #vtable_name (#vtable_fields);
+        #crate_name_ident::downcast::impl_downcast!(#has_trait);
     });
+    res.push(vtable_def);
     res.push(parse_quote! {
-        impl<T: #trait_name + 'static> #crate_name::VTable<T> for #vtable_name {
+        impl<T: #trait_name + 'static> #crate_name_ident::VTable<T> for #vtable_name {
             #[inline]
             fn build_vtable() -> #vtable_name {
                 #vtable_name(#vtable_constructor)
@@ -419,33 +582,53 @@ fn construct_dync_items(
         }
     });
 
-    // Conversions to base tables
-    for base_trait_path in super_traits.iter() {
-        let mut conversion_exprs = Punctuated::<Expr, Token![,]>::new();
+    //let a = res.last().unwrap();
+    //eprintln!("{}", quote! { #a } );
 
-        if let Some(super_traits) = trait_inheritance.get(base_trait_path) {
-            for trait_path in super_traits.iter() {
-                if let Some((_, fns)) = impls.get(&trait_path) {
-                    for (_, fn_name) in fns.iter() {
-                        conversion_exprs.push(parse_quote! { *base.#fn_name() });
+    // Conversions to base tables
+    for super_trait_key in trait_data.super_traits.iter() {
+        let mut conversion_exprs = Punctuated::<Expr, Token![,]>::new();
+        if let Some(super_trait_data) = trait_map.get(&super_trait_key) {
+            //let base_trait_path = &super_trait_data.path;
+            //eprintln!("base: {}", quote! { #base_trait_path });
+            for ss_trait_key in super_trait_data.super_traits.iter() {
+                if let Some(ss_trait_data) = trait_map.get(&ss_trait_key) {
+                    //let ss_trait_path = &ss_trait_data.path;
+                    //eprintln!("  inherit: {}", quote! { #ss_trait_path });
+                    for method in ss_trait_data.methods.iter() {
+                        let has_fn = method.has_fn();
+                        let expr: Expr = parse_quote! { *derived.#has_fn() };
+                        //eprintln!("    inherit_fn: {}", quote! { #expr });
+                        conversion_exprs.push(parse_quote! { #expr });
                     }
                 }
             }
-        } else {
-            if let Some((_, fns)) = impls.get(&base_trait_path) {
-                for (_, fn_name) in fns.iter() {
-                    conversion_exprs.push(parse_quote! { *base.#fn_name() });
-                }
+            for method in super_trait_data.methods.iter() {
+                let has_fn = method.has_fn();
+                let expr: Expr = parse_quote! { *derived.#has_fn() };
+                //eprintln!("  self_fn: {}", quote! { #expr});
+                conversion_exprs.push(expr);
             }
-        }
 
-        if let Some((base_vtable_path, _)) = impls.get(&base_trait_path) {
+            let prefix = super_trait_key.prefix(crate_name);
+            let base_vtable_name = super_trait_data.vtable_name();
+
             // super trait is a custom one, we should be able to define the conversion
+
+            //let convert_item = quote! {
+            //    impl From<#vtable_name> for #prefix #base_vtable_name {
+            //        fn from(derived: #vtable_name) -> Self {
+            //            use #crate_name_ident :: traits::*;
+            //            #base_vtable_name ( #conversion_exprs )
+            //        }
+            //    }
+            //};
+            //eprintln!("{}", quote! { #convert_item });
             res.push(parse_quote! {
-                impl From<#vtable_name> for #base_vtable_path {
-                    fn from(base: #vtable_name) -> Self {
-                        use #crate_name :: traits::*;
-                        #base_vtable_path ( #conversion_exprs )
+                impl From<#vtable_name> for #prefix #base_vtable_name {
+                    fn from(derived: #vtable_name) -> Self {
+                        use #crate_name_ident :: traits::*;
+                        #base_vtable_name ( #conversion_exprs )
                     }
                 }
             });

@@ -5,6 +5,7 @@
 //! The remaining traits improve compatibility with the rest of the standard library.
 
 use crate::bytes::*;
+use crate::value::VTable;
 use dync_derive::dync_trait_method;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -105,11 +106,15 @@ pub type CloneIntoRawFn = unsafe fn(&[u8], &mut [u8]);
 pub type EqFn = unsafe fn(&[u8], &[u8]) -> bool;
 pub type HashFn = unsafe fn(&[u8], &mut dyn Hasher);
 pub type FmtFn = unsafe fn(&[u8], &mut fmt::Formatter) -> Result<(), fmt::Error>;
-pub(crate) type DropFn = unsafe fn(&mut [u8]);
+pub type DropFn = unsafe fn(&mut [u8]);
 
-pub(crate) trait HasDrop {
+use downcast_rs::{impl_downcast, Downcast};
+
+pub trait HasDrop: Downcast {
     fn drop_fn(&self) -> &DropFn;
 }
+
+impl_downcast!(HasDrop);
 
 pub trait HasClone {
     fn clone_fn(&self) -> &CloneFn;
@@ -131,46 +136,67 @@ pub trait HasDebug {
     fn fmt_fn(&self) -> &FmtFn;
 }
 
-pub struct CloneVTable(pub CloneFn, pub CloneFromFn, pub CloneIntoRawFn);
 pub struct DropVTable(pub DropFn);
-pub struct PartialEqVTable(pub EqFn);
-pub struct EqVTable(pub EqFn);
-pub struct HashVTable(pub HashFn);
-pub struct DebugVTable(pub FmtFn);
+pub struct CloneVTable(pub DropFn, pub CloneFn, pub CloneFromFn, pub CloneIntoRawFn);
+pub struct PartialEqVTable(pub DropFn, pub EqFn);
+pub struct EqVTable(pub DropFn, pub EqFn);
+pub struct HashVTable(pub DropFn, pub HashFn);
+pub struct DebugVTable(pub DropFn, pub FmtFn);
 
-impl HasDrop for DropVTable {
-    fn drop_fn(&self) -> &DropFn {
-        &self.0
+impl<T: DropBytes> VTable<T> for DropVTable {
+    fn build_vtable() -> Self {
+        DropVTable(T::drop_bytes)
     }
 }
 
+macro_rules! impl_has_drop {
+    ($($trait:ident),*) => {
+        $(
+            impl HasDrop for $trait {
+                fn drop_fn(&self) -> &DropFn {
+                    &self.0
+                }
+            }
+        )*
+    }
+}
+
+impl_has_drop!(
+    DropVTable,
+    CloneVTable,
+    PartialEqVTable,
+    EqVTable,
+    HashVTable,
+    DebugVTable
+);
+
 impl HasClone for CloneVTable {
     fn clone_fn(&self) -> &CloneFn {
-        &self.0
-    }
-    fn clone_from_fn(&self) -> &CloneFromFn {
         &self.1
     }
-    fn clone_into_raw_fn(&self) -> &CloneIntoRawFn {
+    fn clone_from_fn(&self) -> &CloneFromFn {
         &self.2
+    }
+    fn clone_into_raw_fn(&self) -> &CloneIntoRawFn {
+        &self.3
     }
 }
 
 impl HasHash for HashVTable {
     fn hash_fn(&self) -> &HashFn {
-        &self.0
+        &self.1
     }
 }
 
 impl HasPartialEq for PartialEqVTable {
     fn eq_fn(&self) -> &EqFn {
-        &self.0
+        &self.1
     }
 }
 
 impl HasPartialEq for EqVTable {
     fn eq_fn(&self) -> &EqFn {
-        &self.0
+        &self.1
     }
 }
 
@@ -178,6 +204,6 @@ impl HasEq for EqVTable {}
 
 impl HasDebug for DebugVTable {
     fn fmt_fn(&self) -> &FmtFn {
-        &self.0
+        &self.1
     }
 }

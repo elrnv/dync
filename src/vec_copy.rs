@@ -99,7 +99,11 @@ impl<V> VecCopy<V> {
 
     /// Construct a `VecCopy` with the same type as the given buffer without copying its data.
     #[inline]
-    pub fn with_type_from(other: &VecCopy<V>) -> Self {
+    pub fn with_type_from<'a>(other: impl Into<Meta<Rc<V>>>) -> Self
+    where
+        V: 'a,
+    {
+        let other = other.into();
         VecCopy {
             data: Vec::new(),
             element_size: other.element_size,
@@ -703,7 +707,9 @@ impl<V: ?Sized> VecCopy<V> {
             SliceCopyMut::from_raw_parts(data, element_size, element_type_id, vtable.as_ref())
         }
     }
+}
 
+impl<V> VecCopy<V> {
     /*
      * Methods specific to buffers storing numeric data
      */
@@ -1022,6 +1028,17 @@ impl<V: ?Sized> VecCopy<V> {
     }
 }
 
+impl<'a, V> From<&'a VecCopy<V>> for Meta<Rc<V>> {
+    #[inline]
+    fn from(vec: &'a VecCopy<V>) -> Meta<Rc<V>> {
+        Meta {
+            element_size: vec.element_size,
+            element_type_id: vec.element_type_id,
+            vtable: Rc::clone(&vec.vtable),
+        }
+    }
+}
+
 impl<V: ?Sized> ElementBytes for VecCopy<V> {
     fn element_size(&self) -> usize {
         self.element_size
@@ -1074,7 +1091,7 @@ where
 
 #[cfg(feature = "numeric")]
 /// Implement pretty printing of numeric `VecCopy` data.
-impl<V: ?Sized> fmt::Display for VecCopy<V> {
+impl<V> fmt::Display for VecCopy<V> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         call_numeric_buffer_fn!( self.reinterpret_display::<_>(f) or {
             println!("Unknown VecCopy type for pretty printing.");
@@ -1261,7 +1278,7 @@ mod tests {
         let vecf32 = vec![1f32, -3.0, 10.02, -23.1, 32e-1];
         assert_eq!(vecf32, nu_vec);
 
-        let buf = VecCopy::from(vecf32.clone()); // Convert into buffer
+        let buf = VecUnit::from(vecf32.clone()); // Convert into buffer
         let nu_vec: Vec<f64> = buf.cast_into_vec(); // Convert back into vec
         for (&a, &b) in vecf64.iter().zip(nu_vec.iter()) {
             assert!((a - b).abs() < 1e-6f64 * f64::max(a, b).abs());
