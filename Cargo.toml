@@ -1,6 +1,6 @@
 [package]
 name = "dync"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Egor Larionov <egor.larionov@gmail.com>"]
 license = "MIT OR Apache-2.0"
 description = "An efficient alternative to `dyn Trait` for containerized types"
@@ -13,7 +13,7 @@ readme = "README.md"
 keywords = ["dyn", "trait", "vec", "any"]
 
 [badges]
-travis-ci = { repository = "elrnv/buffer", branch = "master" }
+travis-ci = { repository = "elrnv/dync", branch = "master" }
 
 [dependencies]
 dync-derive = { path = "dync-derive", version = "0.1" }
