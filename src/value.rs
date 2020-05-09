@@ -736,8 +736,22 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
         self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes_mut(b.bytes) })
     }
 
+    /// A consuming upcast that carries the lifetime of the underlying value reference.
     #[inline]
-    pub fn upcast<U: ?Sized + HasDrop + From<V>>(&mut self) -> ValueMut<U>
+    pub fn upcast<U: ?Sized + HasDrop + From<V>>(self) -> ValueMut<'a, U>
+    where
+        V: Clone,
+    {
+        ValueMut {
+            bytes: self.bytes,
+            type_id: self.type_id,
+            vtable: VTableRef::Box(Box::new(U::from(self.vtable.take()))),
+        }
+    }
+
+    /// Create a new mutable value reference upcast from the current one.
+    #[inline]
+    pub fn upcast_mut<U: ?Sized + HasDrop + From<V>>(&mut self) -> ValueMut<U>
     where
         V: Clone,
     {
@@ -804,7 +818,19 @@ impl<'a, V: ?Sized> CopyValueRef<'a, V> {
     }
 
     #[inline]
-    pub fn upcast<U: From<V>>(&self) -> CopyValueRef<U>
+    pub fn upcast<U: ?Sized + From<V>>(self) -> CopyValueRef<'a, U>
+    where
+        V: Clone,
+    {
+        CopyValueRef {
+            bytes: self.bytes,
+            type_id: self.type_id,
+            vtable: VTableRef::Box(Box::new(U::from(self.vtable.take()))),
+        }
+    }
+
+    #[inline]
+    pub fn upcast_ref<U: ?Sized + From<V>>(&self) -> CopyValueRef<U>
     where
         V: Clone,
     {
@@ -812,7 +838,7 @@ impl<'a, V: ?Sized> CopyValueRef<'a, V> {
         CopyValueRef {
             bytes: self.bytes,
             type_id: self.type_id,
-            vtable: VTableRef::Box(Box::new(U::from(vtable.clone()))),
+            vtable: VTableRef::Box(Box::new(U::from((*vtable).clone()))),
         }
     }
 }
