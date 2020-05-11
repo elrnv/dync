@@ -23,6 +23,10 @@ use crate::Elem;
 pub enum Error {
     /// Value could not fit into a single pointer sized word.
     ValueTooLarge,
+    /// Mismatched types.
+    ///
+    /// Trying to assign a value of one type to a value of another.
+    MismatchedTypes { expected: TypeId, actual: TypeId },
 }
 
 impl fmt::Display for Error {
@@ -31,6 +35,9 @@ impl fmt::Display for Error {
         match self {
             Error::ValueTooLarge => {
                 write!(f, "Value could not fit into a single pointer sized word.\nTry constructing a BoxValue instead.")?;
+            }
+            Error::MismatchedTypes { expected, actual } => {
+                writeln!(f, "Trying to assign a value of one type (with TypeId {:?}) to a value of another (with TypeId {:?}).", actual, expected)?;
             }
         }
         Ok(())
@@ -164,8 +171,6 @@ impl<V: HasDebug> HasDebug for (DropFn, V) {
 }
 
 // Helper trait for calling trait functions that take bytes.
-// Note that using SmallValue is currently only beneficial when the trait functions don't take
-// it by value, as otherwise we would need to allocate a new Box.
 pub trait GetBytesRef {
     fn get_bytes_ref(&self) -> &[u8];
 }
@@ -231,7 +236,9 @@ impl<V: HasDrop> SmallValue<V> {
     where
         V: VTable<T>,
     {
-        value.try_into_usize().map(|usized_value| Value {
+        // Prevent drop of value when it goes out of scope.
+        let val = ManuallyDrop::new(value);
+        val.try_into_usize().map(|usized_value| Value {
             bytes: ManuallyDrop::new(usized_value),
             type_id: TypeId::of::<T>(),
             vtable: Ptr::new(V::build_vtable()),
@@ -263,24 +270,6 @@ impl<V: ?Sized + HasDrop> SmallValue<V> {
             bytes: ManuallyDrop::new(bytes),
             type_id,
             vtable,
-        }
-    }
-
-    #[inline]
-    pub fn as_ref(&self) -> ValueRef<V> {
-        ValueRef {
-            bytes: self.bytes.get_bytes_ref(),
-            type_id: self.type_id,
-            vtable: VTableRef::Ref(&self.vtable),
-        }
-    }
-
-    #[inline]
-    pub fn as_mut(&mut self) -> ValueMut<V> {
-        ValueMut {
-            bytes: self.bytes.get_bytes_mut(),
-            type_id: self.type_id,
-            vtable: VTableRef::Ref(&self.vtable),
         }
     }
 
@@ -333,24 +322,6 @@ impl<V: ?Sized + HasDrop> BoxValue<V> {
     }
 
     #[inline]
-    pub fn as_ref(&self) -> ValueRef<V> {
-        ValueRef {
-            bytes: &self.bytes,
-            type_id: self.type_id,
-            vtable: VTableRef::Ref(&self.vtable),
-        }
-    }
-
-    #[inline]
-    pub fn as_mut(&mut self) -> ValueMut<V> {
-        ValueMut {
-            bytes: &mut self.bytes,
-            type_id: self.type_id,
-            vtable: VTableRef::Ref(&self.vtable),
-        }
-    }
-
-    #[inline]
     pub fn upcast<U: HasDrop + From<V>>(self) -> BoxValue<U>
     where
         V: Clone,
@@ -365,6 +336,25 @@ impl<V: ?Sized + HasDrop> BoxValue<V> {
     }
 }
 
+impl<B: GetBytesMut, V: ?Sized + HasDrop> Value<B, V> {
+    #[inline]
+    pub fn as_ref(&self) -> ValueRef<V> {
+        ValueRef {
+            bytes: self.bytes.get_bytes_ref(),
+            type_id: self.type_id,
+            vtable: VTableRef::Ref(&self.vtable),
+        }
+    }
+    #[inline]
+    pub fn as_mut(&mut self) -> ValueMut<V> {
+        ValueMut {
+            bytes: self.bytes.get_bytes_mut(),
+            type_id: self.type_id,
+            vtable: VTableRef::Ref(&self.vtable),
+        }
+    }
+}
+
 impl<B: GetBytesMut, V: ?Sized + HasDebug + HasDrop> fmt::Debug for Value<B, V> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -375,28 +365,14 @@ impl<B: GetBytesMut, V: ?Sized + HasDebug + HasDrop> fmt::Debug for Value<B, V> 
 impl<V: ?Sized + Clone + HasClone + HasDrop> Clone for Value<usize, V> {
     #[inline]
     fn clone(&self) -> Value<usize, V> {
-        let mut bytes = 0usize;
-        // This is safe because clone_into_raw_fn will not attempt to drop the value at the
-        // destination.
-        unsafe {
-            self.vtable.clone_into_raw_fn()(self.bytes.get_bytes_ref(), bytes.as_bytes_mut());
-        }
-        Value {
-            bytes: ManuallyDrop::new(bytes),
-            type_id: self.type_id,
-            vtable: Ptr::clone(&self.vtable),
-        }
+        self.as_ref().clone_small_value()
     }
 }
 
 impl<V: ?Sized + Clone + HasClone + HasDrop> Clone for Value<Box<[u8]>, V> {
     #[inline]
     fn clone(&self) -> Value<Box<[u8]>, V> {
-        Value {
-            bytes: ManuallyDrop::new(unsafe { self.vtable.clone_fn()(self.bytes.get_bytes_ref()) }),
-            type_id: self.type_id,
-            vtable: Ptr::clone(&self.vtable),
-        }
+        self.as_ref().clone_value()
     }
 }
 
@@ -404,6 +380,7 @@ impl<B: GetBytesMut, V: ?Sized + HasDrop> Drop for Value<B, V> {
     #[inline]
     fn drop(&mut self) {
         unsafe {
+            // This is safe since self will never be used after this call.
             let mut bytes = ManuallyDrop::take(&mut self.bytes);
             self.vtable.drop_fn()(bytes.get_bytes_mut())
         }
@@ -684,6 +661,31 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
         }
     }
 
+    /// Clone the referenced value.
+    ///
+    /// Unlike the `Clone` trait, this function will produce an owned clone of the value pointed to
+    /// by this value reference.
+    ///
+    /// This version of `clone_value` tries to fit the underlying value into a `usize` sized value,
+    /// and panics if that fails.
+    #[inline]
+    pub fn clone_small_value(&self) -> Value<usize, V>
+    where
+        V: HasClone + Clone,
+    {
+        let mut bytes = 0usize;
+        // This is safe because clone_into_raw_fn will not attempt to drop the value at the
+        // destination.
+        unsafe {
+            self.vtable.clone_into_raw_fn()(self.bytes.get_bytes_ref(), bytes.as_bytes_mut());
+        }
+        Value {
+            bytes: ManuallyDrop::new(bytes),
+            type_id: self.type_id,
+            vtable: Ptr::from(self.vtable.as_ref().clone()),
+        }
+    }
+
     /// Downcast this value reference into a borrowed `T` type. Return `None` if the downcast fails.
     #[inline]
     pub fn downcast<T: 'static>(self) -> Option<&'a T> {
@@ -713,6 +715,16 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
             bytes: self.bytes,
             type_id: self.type_id,
             vtable: VTableRef::Box(Box::new(U::from((*vtable).clone()))),
+        }
+    }
+
+    /// An alternative to `Clone` that doesn't require cloning the vtable.
+    #[inline]
+    pub fn reborrow(&self) -> ValueRef<V> {
+        ValueRef {
+            bytes: &*self.bytes,
+            type_id: self.type_id,
+            vtable: VTableRef::Ref(self.vtable.as_ref()),
         }
     }
 }
@@ -776,11 +788,18 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
         }
     }
 
+    /// Moves the given value into self.
+    pub fn assign<B: GetBytesMut>(&mut self, mut value: Value<B, V>) {
+        // Swapping the values ensures that `value` will not be dropped, but the overwritten value
+        // in self will.
+        self.swap(&mut value.as_mut())
+    }
+
     /// Clone `other` into `self`.
     ///
     /// This function will call `drop` on any values stored in `self`.
     #[inline]
-    pub fn clone_from_other<'b>(&mut self, other: impl Into<ValueRef<'b, V>>)
+    pub fn clone_from_other<'b>(&mut self, other: impl Into<ValueRef<'b, V>>) -> Result<(), Error>
     where
         V: HasClone + 'b,
     {
@@ -793,6 +812,53 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
                 // needed here.
                 self.vtable.as_ref().clone_from_fn()(&mut self.bytes, other.bytes);
             }
+            Ok(())
+        } else {
+            Err(Error::MismatchedTypes {
+                expected: self.value_type_id(),
+                actual: other.value_type_id(),
+            })
+        }
+    }
+
+    /// Clone the referenced value.
+    ///
+    /// Unlike the `Clone` trait, this function will produce an owned clone of the value pointed to
+    /// by this value reference.
+    #[inline]
+    pub fn clone_value(&self) -> Value<Box<[u8]>, V>
+    where
+        V: HasClone + Clone,
+    {
+        Value {
+            bytes: ManuallyDrop::new(unsafe { self.vtable.as_ref().clone_fn()(&self.bytes) }),
+            type_id: self.type_id,
+            vtable: Ptr::from(self.vtable.as_ref().clone()),
+        }
+    }
+
+    /// Clone the referenced value.
+    ///
+    /// Unlike the `Clone` trait, this function will produce an owned clone of the value pointed to
+    /// by this value reference.
+    ///
+    /// This version of `clone_value` tries to fit the underlying value into a `usize` sized value,
+    /// and panics if that fails.
+    #[inline]
+    pub fn clone_small_value(&self) -> Value<usize, V>
+    where
+        V: HasClone + Clone,
+    {
+        let mut bytes = 0usize;
+        // This is safe because clone_into_raw_fn will not attempt to drop the value at the
+        // destination.
+        unsafe {
+            self.vtable.clone_into_raw_fn()(self.bytes.get_bytes_ref(), bytes.as_bytes_mut());
+        }
+        Value {
+            bytes: ManuallyDrop::new(bytes),
+            type_id: self.type_id,
+            vtable: Ptr::from(self.vtable.as_ref().clone()),
         }
     }
 
@@ -844,6 +910,24 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
             bytes: self.bytes,
             type_id: self.type_id,
             vtable: VTableRef::Box(Box::new(U::from((*self.vtable).clone()))),
+        }
+    }
+
+    #[inline]
+    pub fn reborrow(&self) -> ValueRef<V> {
+        ValueRef {
+            bytes: self.bytes,
+            type_id: self.type_id,
+            vtable: VTableRef::Ref(self.vtable.as_ref()),
+        }
+    }
+
+    #[inline]
+    pub fn reborrow_mut(&mut self) -> ValueMut<V> {
+        ValueMut {
+            bytes: self.bytes,
+            type_id: self.type_id,
+            vtable: VTableRef::Ref(self.vtable.as_ref()),
         }
     }
 }
@@ -1125,6 +1209,13 @@ mod tests {
     #[test]
     fn clone_test() {
         let val = BoxValue::<ValVTable>::new(Rc::new(1u8));
+        assert_eq!(&val, &val.clone());
+    }
+
+    // This test checks that cloning and dropping clones works correctly.
+    #[test]
+    fn clone_small_test() {
+        let val = SmallValue::<ValVTable>::new(Rc::new(1u8));
         assert_eq!(&val, &val.clone());
     }
 }

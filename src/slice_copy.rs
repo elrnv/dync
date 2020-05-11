@@ -163,6 +163,19 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
         }
     }
 
+    /// Construct a clone of the current slice with a reduced lifetime.
+    ///
+    /// This is equivalent to calling `subslice` with the entire range.
+    #[inline]
+    pub fn reborrow(&self) -> SliceCopy<V> {
+        SliceCopy {
+            data: self.data,
+            element_size: self.element_size,
+            element_type_id: self.element_type_id,
+            vtable: VTableRef::Ref(self.vtable.as_ref()),
+        }
+    }
+
     /*
      * Accessors
      */
@@ -521,6 +534,32 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
             None
         } else {
             Some(self)
+        }
+    }
+
+    /// Construct a clone of the current slice with a reduced lifetime.
+    ///
+    /// This is equivalent to calling `subslice` with the entire range.
+    #[inline]
+    pub fn reborrow(&self) -> SliceCopy<V> {
+        SliceCopy {
+            data: self.data,
+            element_size: self.element_size,
+            element_type_id: self.element_type_id,
+            vtable: VTableRef::Ref(self.vtable.as_ref()),
+        }
+    }
+
+    /// Construct a clone of the current slice with a reduced lifetime.
+    ///
+    /// This is equivalent to calling `subslice_mut` with the entire range.
+    #[inline]
+    pub fn reborrow_mut(&mut self) -> SliceCopyMut<V> {
+        SliceCopyMut {
+            data: self.data,
+            element_size: self.element_size,
+            element_type_id: self.element_type_id,
+            vtable: VTableRef::Ref(self.vtable.as_ref()),
         }
     }
 

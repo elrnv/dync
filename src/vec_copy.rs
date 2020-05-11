@@ -101,21 +101,6 @@ impl<V> VecCopy<V> {
         }
     }
 
-    /// Construct a `VecCopy` with the same type as the given buffer without copying its data.
-    #[inline]
-    pub fn with_type_from<'a>(other: impl Into<Meta<Ptr<V>>>) -> Self
-    where
-        V: Clone + 'a,
-    {
-        let other = other.into();
-        VecCopy {
-            data: Vec::new(),
-            element_size: other.element_size,
-            element_type_id: other.element_type_id,
-            vtable: Ptr::clone(&other.vtable),
-        }
-    }
-
     /// Construct an empty `VecCopy` with a capacity for a given number of typed elements. For
     /// setting byte capacity use `with_byte_capacity`.
     #[inline]
@@ -230,6 +215,22 @@ impl<V> VecCopy<V> {
 }
 
 impl<V: ?Sized> VecCopy<V> {
+    /// Construct a `VecCopy` with the same type as the given buffer without copying its data.
+    #[inline]
+    pub fn with_type_from<'a>(other: impl Into<Meta<Ptr<V>>>) -> Self
+    where
+        V: 'a,
+        Ptr<V>: Clone,
+    {
+        let other = other.into();
+        VecCopy {
+            data: Vec::new(),
+            element_size: other.element_size,
+            element_type_id: other.element_type_id,
+            vtable: other.vtable.clone(),
+        }
+    }
+
     /// This is very unsafe to use.
     ///
     /// Almost exclusively the only inputs that work here are the ones returned by
@@ -1034,13 +1035,27 @@ impl<V: ?Sized> VecCopy<V> {
     }
 }
 
-impl<'a, V: Clone> From<&'a VecCopy<V>> for Meta<Ptr<V>> {
+impl<'a, V> From<&'a VecCopy<V>> for Meta<VTableRef<'a, V>> {
+    #[inline]
+    fn from(vec: &'a VecCopy<V>) -> Meta<VTableRef<'a, V>> {
+        Meta {
+            element_size: vec.element_size,
+            element_type_id: vec.element_type_id,
+            vtable: VTableRef::Ref(vec.vtable.as_ref()),
+        }
+    }
+}
+
+impl<'a, V> From<&'a VecCopy<V>> for Meta<Ptr<V>>
+where
+    Ptr<V>: Clone,
+{
     #[inline]
     fn from(vec: &'a VecCopy<V>) -> Meta<Ptr<V>> {
         Meta {
             element_size: vec.element_size,
             element_type_id: vec.element_type_id,
-            vtable: Ptr::clone(&vec.vtable),
+            vtable: vec.vtable.clone(),
         }
     }
 }

@@ -69,7 +69,30 @@ impl<'a, V: Clone> From<SliceDropMut<'a, V>> for Meta<Ptr<V>> {
 }
 
 impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
-    pub(crate) unsafe fn from_raw_parts(
+    /// Convert this collection into its raw components.
+    ///
+    /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
+    /// stabilized.
+    #[inline]
+    pub unsafe fn into_raw_parts(self) -> (&'a [u8], usize, TypeId, VTableRef<'a, V>) {
+        let SliceCopy {
+            data,
+            element_size,
+            element_type_id,
+            vtable,
+        } = self.data;
+        (data, element_size, element_type_id, vtable)
+    }
+
+    /// This is very unsafe to use.
+    ///
+    /// Almost exclusively the only inputs that work here are the ones returned by
+    /// `into_raw_parts`.
+    ///
+    /// This function should not be used other than in internal APIs. It exists to enable the
+    /// `into_dyn` macro until `CoerceUsize` is stabilized.
+    #[inline]
+    pub unsafe fn from_raw_parts(
         data: &'a [u8],
         element_size: usize,
         element_type_id: TypeId,
@@ -102,6 +125,16 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
             None
         } else {
             Some(self)
+        }
+    }
+
+    /// Construct a clone of the current slice with a reduced lifetime.
+    ///
+    /// This is equivalent to calling `subslice` with the entire range.
+    #[inline]
+    pub fn reborrow(&self) -> SliceDrop<V> {
+        SliceDrop {
+            data: self.data.reborrow(),
         }
     }
 
@@ -315,7 +348,30 @@ impl<'a, V: HasDrop> SliceDropMut<'a, V> {
 }
 
 impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
-    pub(crate) unsafe fn from_raw_parts(
+    /// Convert this collection into its raw components.
+    ///
+    /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
+    /// stabilized.
+    #[inline]
+    pub unsafe fn into_raw_parts(self) -> (&'a [u8], usize, TypeId, VTableRef<'a, V>) {
+        let SliceCopyMut {
+            data,
+            element_size,
+            element_type_id,
+            vtable,
+        } = self.data;
+        (data, element_size, element_type_id, vtable)
+    }
+
+    /// This is very unsafe to use.
+    ///
+    /// Almost exclusively the only inputs that work here are the ones returned by
+    /// `into_raw_parts`.
+    ///
+    /// This function should not be used other than in internal APIs. It exists to enable the
+    /// `into_dyn` macro until `CoerceUsize` is stabilized.
+    #[inline]
+    pub unsafe fn from_raw_parts(
         data: &'a mut [u8],
         element_size: usize,
         element_type_id: TypeId,
@@ -347,6 +403,26 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
             None
         } else {
             Some(self)
+        }
+    }
+
+    /// Construct a clone of the current slice with a reduced lifetime.
+    ///
+    /// This is equivalent to calling `subslice` with the entire range.
+    #[inline]
+    pub fn reborrow(&self) -> SliceDrop<V> {
+        SliceDrop {
+            data: self.data.reborrow(),
+        }
+    }
+
+    /// Construct a clone of the current slice with a reduced lifetime.
+    ///
+    /// This is equivalent to calling `subslice_mut` with the entire range.
+    #[inline]
+    pub fn reborrow_mut(&mut self) -> SliceDropMut<V> {
+        SliceDropMut {
+            data: self.data.reborrow_mut(),
         }
     }
 

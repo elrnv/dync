@@ -138,12 +138,12 @@ where
     }
 
     #[inline]
-    fn try_into_usize(self) -> Option<usize> {
+    fn try_into_usize(&self) -> Option<usize> {
         // This is safe since all bit representations with size `size_of::<usize>` are valid usize
         // values.
         unsafe {
             if size_of::<Self>() == size_of::<usize>() {
-                Some(std::mem::transmute_copy(&self))
+                Some(std::mem::transmute_copy(self))
             } else {
                 None
             }

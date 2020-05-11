@@ -101,17 +101,6 @@ impl<V: HasDrop> VecDrop<V> {
         }
     }
 
-    /// Construct a vector with the same type as the given vector without copying its data.
-    #[inline]
-    pub fn with_type_from(other: impl Into<Meta<Ptr<V>>>) -> Self
-    where
-        V: Clone,
-    {
-        VecDrop {
-            data: ManuallyDrop::new(VecCopy::with_type_from(other.into())),
-        }
-    }
-
     /// Construct an empty vector with a capacity for a given number of typed pointed-to elements.
     #[inline]
     pub fn with_capacity<T: Elem>(n: usize) -> Self
@@ -140,6 +129,17 @@ impl<V: HasDrop> VecDrop<V> {
 }
 
 impl<V: ?Sized + HasDrop> VecDrop<V> {
+    /// Construct a vector with the same type as the given vector without copying its data.
+    #[inline]
+    pub fn with_type_from<'a>(other: impl Into<Meta<Ptr<V>>>) -> Self
+    where
+        Ptr<V>: Clone,
+    {
+        VecDrop {
+            data: ManuallyDrop::new(VecCopy::with_type_from(other.into())),
+        }
+    }
+
     /// This is very unsafe to use.
     ///
     /// Almost exclusively the only inputs that work here are the ones returned by
@@ -169,13 +169,17 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub unsafe fn into_raw_parts(mut self) -> (Vec<u8>, usize, TypeId, Ptr<V>) {
+    pub unsafe fn into_raw_parts(self) -> (Vec<u8>, usize, TypeId, Ptr<V>) {
+        // Inhibit dropping self.
+        let mut md = ManuallyDrop::new(self);
+        // Taking is safe here because data will not be used after this call since self is
+        // consumed, and self will not be dropped.
         let VecCopy {
             data,
             element_size,
             element_type_id,
             vtable,
-        } = ManuallyDrop::take(&mut self.data);
+        } = ManuallyDrop::take(&mut md.data);
         (data, element_size, element_type_id, vtable)
     }
 
@@ -427,7 +431,7 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
         if self.element_type_id() == value.value_type_id() {
             let orig_len = self.data.data.len();
             self.data.data.resize(orig_len + value.bytes.len(), 0u8);
-            // This does not leak because the copied bytes are guaranteed to be dropped into self.
+            // This does not leak because the copied bytes are guaranteed to be dropped by self.
             // This will also not cause a double free since the bytes in self are not dropped by
             // clone_into_raw_fn unlike clone_from_fn.
             unsafe {
@@ -695,6 +699,13 @@ impl<'a, V: Clone + HasDrop> From<&'a VecDrop<V>> for Meta<Ptr<V>> {
     }
 }
 
+impl<'a, V: Clone + HasDrop> From<&'a VecDrop<V>> for Meta<VTableRef<'a, V>> {
+    #[inline]
+    fn from(v: &'a VecDrop<V>) -> Self {
+        Meta::from(&*v.data)
+    }
+}
+
 /// Convert a `Vec` to a buffer.
 impl<T: Elem, V: HasDrop + VTable<T>> From<Vec<T>> for VecDrop<V> {
     #[inline]
@@ -839,6 +850,35 @@ mod tests {
     }
 
     #[test]
+    fn clone_from_small_test() {
+        use std::collections::HashSet;
+
+        // Let's create a collection of `Rc`s.
+        let vec_rc: Vec<_> = vec![1, 23, 2, 42, 23, 1, 13534653]
+            .into_iter()
+            .map(Rc::new)
+            .collect();
+        let buf = VecDropAll::from(vec_rc.clone()); // Clone into VecDrop
+
+        // Construct a hashset of unique values from the VecDrop.
+        let mut hashset: HashSet<SmallValue<AllTraitVTable>> = HashSet::new();
+
+        for rc_ref in buf.iter().take(4) {
+            assert!(hashset.insert(rc_ref.clone_small_value()));
+        }
+
+        assert!(!hashset.insert(SmallValue::new(Rc::clone(&vec_rc[4]))));
+        assert!(!hashset.insert(SmallValue::new(Rc::clone(&vec_rc[5]))));
+
+        assert_eq!(hashset.len(), 4);
+        assert!(hashset.contains(&SmallValue::new(Rc::new(1))));
+        assert!(hashset.contains(&SmallValue::new(Rc::new(23))));
+        assert!(hashset.contains(&SmallValue::new(Rc::new(2))));
+        assert!(hashset.contains(&SmallValue::new(Rc::new(42))));
+        assert!(!hashset.contains(&SmallValue::new(Rc::new(13534653))));
+    }
+
+    #[test]
     fn iter() {
         let vec: Vec<_> = vec![1, 23, 2, 42, 11].into_iter().map(Rc::new).collect();
         {
@@ -847,7 +887,7 @@ mod tests {
             let mut rc = Rc::clone(&orig);
             assert_eq!(Rc::strong_count(&rc), 2);
             for val in buf.iter() {
-                ValueMut::new(&mut rc).clone_from_other(val);
+                ValueMut::new(&mut rc).clone_from_other(val).unwrap();
             }
             assert_eq!(Rc::strong_count(&orig), 1);
             assert_eq!(Rc::strong_count(&rc), 3);
