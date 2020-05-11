@@ -3,9 +3,13 @@ use std::{
     any::{Any, TypeId},
     fmt,
     mem::ManuallyDrop,
-    rc::Rc,
     slice,
 };
+
+#[cfg(not(feature = "shared-vtables"))]
+use std::boxed::Box as Ptr;
+#[cfg(feature = "shared-vtables")]
+use std::rc::Rc as Ptr;
 
 use crate::slice_drop::*;
 use crate::traits::*;
@@ -40,14 +44,19 @@ impl<V: ?Sized + HasDrop> Drop for VecDrop<V> {
     }
 }
 
-impl<V: ?Sized + HasDrop + HasClone> Clone for VecDrop<V> {
+impl<V: ?Sized + Clone + HasDrop + HasClone> Clone for VecDrop<V> {
     fn clone(&self) -> Self {
         let data_clone = |bytes: &[u8]| {
             let mut new_data = bytes.to_vec();
             self.data
                 .byte_chunks()
                 .zip(new_data.chunks_exact_mut(self.data.element_size()))
-                .for_each(|(src, dst)| unsafe { self.data.vtable.clone_from_fn()(dst, src) });
+                .for_each(|(src, dst)| unsafe {
+                    // This is safe since `clone_into_raw_fn` ensures that the
+                    // bytes in dst are not dropped before cloning, which is essential, since they
+                    // are just copied by the `.to_vec()` call above.
+                    self.data.vtable.clone_into_raw_fn()(src, dst)
+                });
             new_data
         };
         VecDrop {
@@ -94,7 +103,10 @@ impl<V: HasDrop> VecDrop<V> {
 
     /// Construct a vector with the same type as the given vector without copying its data.
     #[inline]
-    pub fn with_type_from(other: impl Into<Meta<Rc<V>>>) -> Self {
+    pub fn with_type_from(other: impl Into<Meta<Ptr<V>>>) -> Self
+    where
+        V: Clone,
+    {
         VecDrop {
             data: ManuallyDrop::new(VecCopy::with_type_from(other.into())),
         }
@@ -140,7 +152,7 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
         data: Vec<u8>,
         element_size: usize,
         element_type_id: TypeId,
-        vtable: Rc<V>,
+        vtable: Ptr<V>,
     ) -> VecDrop<V> {
         VecDrop {
             data: ManuallyDrop::new(VecCopy {
@@ -157,7 +169,7 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub unsafe fn into_raw_parts(mut self) -> (Vec<u8>, usize, TypeId, Rc<V>) {
+    pub unsafe fn into_raw_parts(mut self) -> (Vec<u8>, usize, TypeId, Ptr<V>) {
         let VecCopy {
             data,
             element_size,
@@ -415,7 +427,9 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
         if self.element_type_id() == value.value_type_id() {
             let orig_len = self.data.data.len();
             self.data.data.resize(orig_len + value.bytes.len(), 0u8);
-            // This does not leak because the copied bytes are guaranteed to be dropped.
+            // This does not leak because the copied bytes are guaranteed to be dropped into self.
+            // This will also not cause a double free since the bytes in self are not dropped by
+            // clone_into_raw_fn unlike clone_from_fn.
             unsafe {
                 self.data.vtable.clone_into_raw_fn()(value.bytes, &mut self.data.data[orig_len..]);
             }
@@ -674,7 +688,7 @@ impl<V: ?Sized + HasDrop + HasClone> VecDrop<V> {
     }
 }
 
-impl<'a, V: HasDrop> From<&'a VecDrop<V>> for Meta<Rc<V>> {
+impl<'a, V: Clone + HasDrop> From<&'a VecDrop<V>> for Meta<Ptr<V>> {
     #[inline]
     fn from(v: &'a VecDrop<V>) -> Self {
         Meta::from(&*v.data)
@@ -798,7 +812,6 @@ mod tests {
     #[test]
     fn clone_from_test() {
         use std::collections::HashSet;
-        use std::rc::Rc;
 
         // Let's create a collection of `Rc`s.
         let vec_rc: Vec<_> = vec![1, 23, 2, 42, 23, 1, 13534653]
@@ -827,7 +840,6 @@ mod tests {
 
     #[test]
     fn iter() {
-        use std::rc::Rc;
         let vec: Vec<_> = vec![1, 23, 2, 42, 11].into_iter().map(Rc::new).collect();
         {
             let buf = VecDropAll::from(vec.clone()); // Convert into buffer
@@ -1109,5 +1121,12 @@ mod tests {
         let vec: Vec<u8> = buf.into_vec().unwrap();
 
         assert_eq!(vec, vec![1u8, 100, 23]);
+    }
+
+    // This test checks that cloning and dropping clones works correctly.
+    #[test]
+    fn clone_test() {
+        let buf = VecDropAll::with_size::<Rc<u8>>(3, Rc::new(1u8));
+        assert_eq!(&buf, &buf.clone());
     }
 }

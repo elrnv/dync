@@ -15,9 +15,13 @@
 use std::{
     any::{Any, TypeId},
     mem::size_of,
-    rc::Rc,
     slice,
 };
+
+#[cfg(not(feature = "shared-vtables"))]
+use std::boxed::Box as Ptr;
+#[cfg(feature = "shared-vtables")]
+use std::rc::Rc as Ptr;
 
 #[cfg(feature = "numeric")]
 use std::fmt;
@@ -67,7 +71,7 @@ where
     /// Type encoding for hiding the type of data from the compiler.
     pub(crate) element_type_id: TypeId,
 
-    pub(crate) vtable: Rc<V>,
+    pub(crate) vtable: Ptr<V>,
 }
 
 impl<V> VecCopy<V> {
@@ -93,22 +97,22 @@ impl<V> VecCopy<V> {
             data: Vec::new(),
             element_size,
             element_type_id: TypeId::of::<T>(),
-            vtable: Rc::new(V::build_vtable()),
+            vtable: Ptr::new(V::build_vtable()),
         }
     }
 
     /// Construct a `VecCopy` with the same type as the given buffer without copying its data.
     #[inline]
-    pub fn with_type_from<'a>(other: impl Into<Meta<Rc<V>>>) -> Self
+    pub fn with_type_from<'a>(other: impl Into<Meta<Ptr<V>>>) -> Self
     where
-        V: 'a,
+        V: Clone + 'a,
     {
         let other = other.into();
         VecCopy {
             data: Vec::new(),
             element_size: other.element_size,
             element_type_id: other.element_type_id,
-            vtable: Rc::clone(&other.vtable),
+            vtable: Ptr::clone(&other.vtable),
         }
     }
 
@@ -135,7 +139,7 @@ impl<V> VecCopy<V> {
             data: Vec::with_capacity(n * element_size),
             element_size,
             element_type_id: TypeId::of::<T>(),
-            vtable: Rc::new(V::build_vtable()),
+            vtable: Ptr::new(V::build_vtable()),
         }
     }
 
@@ -198,7 +202,7 @@ impl<V> VecCopy<V> {
             data,
             element_size,
             element_type_id: TypeId::of::<T>(),
-            vtable: Rc::new(V::build_vtable()),
+            vtable: Ptr::new(V::build_vtable()),
         }
     }
 
@@ -238,7 +242,7 @@ impl<V: ?Sized> VecCopy<V> {
         data: Vec<u8>,
         element_size: usize,
         element_type_id: TypeId,
-        vtable: Rc<V>,
+        vtable: Ptr<V>,
     ) -> VecCopy<V> {
         VecCopy {
             data,
@@ -253,7 +257,7 @@ impl<V: ?Sized> VecCopy<V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub unsafe fn into_raw_parts(self) -> (Vec<u8>, usize, TypeId, Rc<V>) {
+    pub unsafe fn into_raw_parts(self) -> (Vec<u8>, usize, TypeId, Ptr<V>) {
         let VecCopy {
             data,
             element_size,
@@ -284,7 +288,7 @@ impl<V: ?Sized> VecCopy<V> {
             data: self.data,
             element_size: self.element_size,
             element_type_id: self.element_type_id,
-            vtable: Rc::new(f((*self.vtable).clone())),
+            vtable: Ptr::new(f((*self.vtable).clone())),
         }
     }
 
@@ -758,7 +762,7 @@ impl<'a, V: Clone + ?Sized + 'a> std::iter::FromIterator<CopyValueRef<'a, V>> fo
             data,
             element_size: next.size(),
             element_type_id: next.value_type_id(),
-            vtable: Rc::new(next.vtable.take()),
+            vtable: Ptr::new(next.vtable.take()),
         };
         buf.extend(iter);
         buf
@@ -780,17 +784,19 @@ impl<'a, V: ?Sized + 'a> Extend<CopyValueRef<'a, V>> for VecCopy<V> {
  * Advanced methods to probe buffer internals.
  */
 
-impl<V: ?Sized> VecCopy<V> {
+impl<V: ?Sized + Clone> VecCopy<V> {
     /// Clones this `VecCopy` using the given function.
     pub(crate) fn clone_with(&self, clone: impl FnOnce(&[u8]) -> Vec<u8>) -> Self {
         VecCopy {
             data: clone(&self.data),
             element_size: self.element_size,
             element_type_id: self.element_type_id,
-            vtable: Rc::clone(&self.vtable),
+            vtable: Ptr::clone(&self.vtable),
         }
     }
+}
 
+impl<V: ?Sized> VecCopy<V> {
     /// Reserves capacity for at least `additional` more bytes to be inserted in this buffer.
     #[inline]
     pub fn reserve_bytes(&mut self, additional: usize) {
@@ -1028,13 +1034,13 @@ impl<V: ?Sized> VecCopy<V> {
     }
 }
 
-impl<'a, V> From<&'a VecCopy<V>> for Meta<Rc<V>> {
+impl<'a, V: Clone> From<&'a VecCopy<V>> for Meta<Ptr<V>> {
     #[inline]
-    fn from(vec: &'a VecCopy<V>) -> Meta<Rc<V>> {
+    fn from(vec: &'a VecCopy<V>) -> Meta<Ptr<V>> {
         Meta {
             element_size: vec.element_size,
             element_type_id: vec.element_type_id,
-            vtable: Rc::clone(&vec.vtable),
+            vtable: Ptr::clone(&vec.vtable),
         }
     }
 }

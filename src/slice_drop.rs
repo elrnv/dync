@@ -10,6 +10,11 @@ use crate::value::*;
 use crate::Elem;
 use crate::ElementBytes;
 
+#[cfg(not(feature = "shared-vtables"))]
+use std::boxed::Box as Ptr;
+#[cfg(feature = "shared-vtables")]
+use std::rc::Rc as Ptr;
+
 /*
  * Immutable slice
  */
@@ -42,7 +47,7 @@ impl<'a, V> From<SliceDrop<'a, V>> for Meta<VTableRef<'a, V>> {
     }
 }
 
-impl<'a, V: Clone> From<SliceDrop<'a, V>> for Meta<std::rc::Rc<V>> {
+impl<'a, V: Clone> From<SliceDrop<'a, V>> for Meta<Ptr<V>> {
     #[inline]
     fn from(slice: SliceDrop<'a, V>) -> Self {
         Meta::from(slice.data)
@@ -56,7 +61,7 @@ impl<'a, V> From<SliceDropMut<'a, V>> for Meta<VTableRef<'a, V>> {
     }
 }
 
-impl<'a, V: Clone> From<SliceDropMut<'a, V>> for Meta<std::rc::Rc<V>> {
+impl<'a, V: Clone> From<SliceDropMut<'a, V>> for Meta<Ptr<V>> {
     #[inline]
     fn from(slice: SliceDropMut<'a, V>) -> Self {
         Meta::from(slice.data)

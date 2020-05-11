@@ -1,7 +1,6 @@
 use std::{
     any::{Any, TypeId},
     mem::size_of,
-    rc::Rc,
     slice,
 };
 
@@ -9,6 +8,11 @@ use crate::index_slice::*;
 use crate::value::*;
 use crate::CopyElem;
 use crate::{ElementBytes, ElementBytesMut};
+
+#[cfg(not(feature = "shared-vtables"))]
+use std::boxed::Box as Ptr;
+#[cfg(feature = "shared-vtables")]
+use std::rc::Rc as Ptr;
 
 /*
  * Immutable slice
@@ -73,13 +77,13 @@ impl<'a, V> From<SliceCopy<'a, V>> for Meta<VTableRef<'a, V>> {
     }
 }
 
-impl<'a, V: Clone> From<SliceCopy<'a, V>> for Meta<Rc<V>> {
+impl<'a, V: Clone> From<SliceCopy<'a, V>> for Meta<Ptr<V>> {
     #[inline]
     fn from(slice: SliceCopy<'a, V>) -> Self {
         Meta {
             element_size: slice.element_size,
             element_type_id: slice.element_type_id,
-            vtable: slice.vtable.into_rc(),
+            vtable: slice.vtable.into_owned(),
         }
     }
 }
@@ -791,13 +795,13 @@ impl<'a, V> From<SliceCopyMut<'a, V>> for Meta<VTableRef<'a, V>> {
     }
 }
 
-impl<'a, V: Clone> From<SliceCopyMut<'a, V>> for Meta<Rc<V>> {
+impl<'a, V: Clone> From<SliceCopyMut<'a, V>> for Meta<Ptr<V>> {
     #[inline]
     fn from(slice: SliceCopyMut<'a, V>) -> Self {
         Meta {
             element_size: slice.element_size,
             element_type_id: slice.element_type_id,
-            vtable: slice.vtable.into_rc(),
+            vtable: slice.vtable.into_owned(),
         }
     }
 }

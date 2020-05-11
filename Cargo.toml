@@ -27,6 +27,7 @@ criterion = "0.3"
 
 [features]
 numeric = ["num-traits"]
+shared-vtables = []
 
 [[bench]]
 name = "type_erasure"

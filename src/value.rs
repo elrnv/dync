@@ -9,7 +9,11 @@ use std::any::{Any, TypeId};
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::mem::ManuallyDrop;
-use std::rc::Rc;
+
+#[cfg(not(feature = "shared-vtables"))]
+use std::boxed::Box as Ptr;
+#[cfg(feature = "shared-vtables")]
+use std::rc::Rc as Ptr;
 
 use crate::bytes::*;
 use crate::traits::*;
@@ -45,13 +49,13 @@ pub struct Meta<V> {
     pub vtable: V,
 }
 
-impl<'a, B: GetBytesMut, V: HasDrop> From<&'a Value<B, V>> for Meta<Rc<V>> {
+impl<'a, B: GetBytesMut, V: Clone + HasDrop> From<&'a Value<B, V>> for Meta<Ptr<V>> {
     #[inline]
-    fn from(val: &'a Value<B, V>) -> Meta<Rc<V>> {
+    fn from(val: &'a Value<B, V>) -> Meta<Ptr<V>> {
         Meta {
             element_size: val.bytes.get_bytes_ref().len(),
             element_type_id: val.type_id,
-            vtable: Rc::clone(&val.vtable),
+            vtable: Ptr::clone(&val.vtable),
         }
     }
 }
@@ -232,7 +236,7 @@ where
 {
     pub(crate) bytes: ManuallyDrop<B>,
     pub(crate) type_id: TypeId,
-    pub(crate) vtable: Rc<V>,
+    pub(crate) vtable: Ptr<V>,
 }
 
 //pub type SmallValue<V> = Value<usize, V>;
@@ -246,7 +250,7 @@ impl<V> SmallValue<V> {
         value.try_into_usize().map(|usized_value| Value {
             bytes: ManuallyDrop::new(usized_value),
             type_id: TypeId::of::<T>(),
-            vtable: Rc::new(V::build_vtable()),
+            vtable: Ptr::new(V::build_vtable()),
         })
     }
     /// Create a new `SmallValue` from a `usize` and an associated `TypeId`.
@@ -258,7 +262,7 @@ impl<V> SmallValue<V> {
     pub(crate) unsafe fn from_raw_parts(
         bytes: usize,
         type_id: TypeId,
-        vtable: Rc<(DropFn, V)>,
+        vtable: Ptr<(DropFn, V)>,
     ) -> Value<usize, V> {
         Value {
             bytes: ManuallyDrop::new(bytes),
@@ -278,7 +282,7 @@ impl<V: HasDrop> BoxValue<V> {
         Value {
             bytes: ManuallyDrop::new(Bytes::box_into_box_bytes(Box::new(value))),
             type_id: TypeId::of::<T>(),
-            vtable: Rc::new(V::build_vtable()),
+            vtable: Ptr::new(V::build_vtable()),
         }
     }
 }
@@ -293,7 +297,7 @@ impl<V: ?Sized + HasDrop> BoxValue<V> {
     pub(crate) unsafe fn from_raw_parts(
         bytes: Box<[u8]>,
         type_id: TypeId,
-        vtable: Rc<V>,
+        vtable: Ptr<V>,
     ) -> Value<Box<[u8]>, V> {
         Value {
             bytes: ManuallyDrop::new(bytes),
@@ -330,7 +334,7 @@ impl<V: ?Sized + HasDrop> BoxValue<V> {
         Value {
             bytes: md.bytes.clone(),
             type_id: md.type_id,
-            vtable: Rc::new(U::from((*md.vtable).clone())),
+            vtable: Ptr::new(U::from((*md.vtable).clone())),
         }
     }
 }
@@ -342,13 +346,13 @@ impl<B: GetBytesMut, V: ?Sized + HasDebug + HasDrop> fmt::Debug for Value<B, V> 
     }
 }
 
-impl<V: ?Sized + HasClone + HasDrop> Clone for Value<Box<[u8]>, V> {
+impl<V: ?Sized + Clone + HasClone + HasDrop> Clone for Value<Box<[u8]>, V> {
     #[inline]
     fn clone(&self) -> Value<Box<[u8]>, V> {
         Value {
             bytes: ManuallyDrop::new(unsafe { self.vtable.clone_fn()(self.bytes.get_bytes_ref()) }),
             type_id: self.type_id,
-            vtable: Rc::clone(&self.vtable),
+            vtable: Ptr::clone(&self.vtable),
         }
     }
 }
@@ -364,8 +368,16 @@ impl<B: GetBytesMut, V: ?Sized + HasDrop> Drop for Value<B, V> {
 }
 
 impl<B: GetBytesMut, V: ?Sized + HasDrop + HasPartialEq> PartialEq for Value<B, V> {
+    /// # Panics
+    ///
+    /// This function panics if the types of the two operands don't match.
     #[inline]
     fn eq(&self, other: &Self) -> bool {
+        assert_eq!(
+            self.type_id, other.type_id,
+            "Comparing values of different types is forbidden"
+        );
+        // This is safe because we have just checked that the two types are the same.
         unsafe { self.vtable.eq_fn()(self.bytes.get_bytes_ref(), other.bytes.get_bytes_ref()) }
     }
 }
@@ -450,8 +462,9 @@ where
     V: ?Sized,
 {
     Ref(&'a V),
-    Rc(Rc<V>),
     Box(Box<V>),
+    #[cfg(feature = "shared-vtables")]
+    Rc(Rc<V>),
 }
 
 impl<'a, V: Clone + ?Sized> VTableRef<'a, V> {
@@ -460,15 +473,18 @@ impl<'a, V: Clone + ?Sized> VTableRef<'a, V> {
         match self {
             VTableRef::Ref(v) => v.clone(),
             VTableRef::Box(v) => *v,
+            #[cfg(feature = "shared-vtables")]
             VTableRef::Rc(v) => Rc::try_unwrap(v).unwrap_or_else(|v| (*v).clone()),
         }
     }
+
     #[inline]
-    pub fn into_rc(self) -> Rc<V> {
+    pub fn into_owned(self) -> Ptr<V> {
         match self {
-            VTableRef::Ref(v) => Rc::new(v.clone()),
-            VTableRef::Box(v) => Rc::from(v),
-            VTableRef::Rc(v) => Rc::clone(&v),
+            VTableRef::Ref(v) => Ptr::new(v.clone()),
+            VTableRef::Box(v) => Ptr::from(v),
+            #[cfg(feature = "shared-vtables")]
+            VTableRef::Rc(v) => Ptr::from(&v),
         }
     }
 }
@@ -495,6 +511,7 @@ impl<'a, V: ?Sized> From<Box<V>> for VTableRef<'a, V> {
     }
 }
 
+#[cfg(feature = "shared-vtables")]
 impl<'a, V: ?Sized> From<Rc<V>> for VTableRef<'a, V> {
     #[inline]
     fn from(v: Rc<V>) -> VTableRef<'a, V> {
@@ -508,6 +525,7 @@ impl<'a, V: ?Sized> AsRef<V> for VTableRef<'a, V> {
         match self {
             VTableRef::Ref(v) => v,
             VTableRef::Box(v) => &*v,
+            #[cfg(feature = "shared-vtables")]
             VTableRef::Rc(v) => &*v,
         }
     }
@@ -543,6 +561,11 @@ impl<'a, V: ?Sized + HasDebug + HasDrop> fmt::Debug for ValueRef<'a, V> {
 impl<'a, V: ?Sized + HasPartialEq + HasDrop> PartialEq for ValueRef<'a, V> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
+        assert_eq!(
+            self.type_id, other.type_id,
+            "Comparing values of different types is forbidden"
+        );
+        // This is safe because we have just checked that the two types are the same.
         unsafe {
             self.vtable.as_ref().eq_fn()(self.bytes.get_bytes_ref(), other.bytes.get_bytes_ref())
         }
@@ -563,6 +586,20 @@ impl<'a, V: HasDrop> ValueRef<'a, V> {
             bytes: typed.as_bytes(),
             type_id: TypeId::of::<T>(),
             vtable: VTableRef::Box(Box::new(V::build_vtable())),
+        }
+    }
+}
+
+impl<'a, B: GetBytesMut, V> From<&'a Value<B, V>> for ValueRef<'a, V>
+where
+    B: GetBytesRef,
+    V: ?Sized + Clone + HasDrop,
+{
+    fn from(val: &'a Value<B, V>) -> Self {
+        ValueRef {
+            bytes: val.bytes.get_bytes_ref(),
+            type_id: val.type_id,
+            vtable: Ptr::clone(&val.vtable).into(),
         }
     }
 }
@@ -600,7 +637,7 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
         Value {
             bytes: ManuallyDrop::new(unsafe { self.vtable.as_ref().clone_fn()(&self.bytes) }),
             type_id: self.type_id,
-            vtable: Rc::from(self.vtable.as_ref().clone()),
+            vtable: Ptr::from(self.vtable.as_ref().clone()),
         }
     }
 
@@ -657,6 +694,11 @@ impl<'a, V: ?Sized + HasDebug + HasDrop> fmt::Debug for ValueMut<'a, V> {
 impl<'a, V: ?Sized + HasPartialEq + HasDrop> PartialEq for ValueMut<'a, V> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
+        assert_eq!(
+            self.type_id, other.type_id,
+            "Comparing values of different types is forbidden"
+        );
+        // This is safe because we have just checked that the two types are the same.
         unsafe {
             self.vtable.as_ref().eq_fn()(self.bytes.get_bytes_ref(), other.bytes.get_bytes_ref())
         }
@@ -983,6 +1025,64 @@ impl<'a, V: Any + Clone> From<CopyValueRef<'a, V>> for ValueRef<'a, (DropFn, V)>
             type_id: v.type_id,
             vtable: VTableRef::Box(Box::new((drop_copy, v.vtable.take()))),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dync_trait;
+    use std::rc::Rc;
+
+    #[dync_trait(dync_crate_name = "crate")]
+    pub trait Val: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug + 'static {}
+    impl<T> Val for T where T: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug + 'static {}
+
+    #[test]
+    #[should_panic]
+    fn forbidden_value_compare() {
+        let a = BoxValue::<ValVTable>::new(Rc::new("Hello"));
+        let b = BoxValue::<ValVTable>::new(Rc::new(String::from("Hello")));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    #[should_panic]
+    fn forbidden_value_ref_compare() {
+        let a = BoxValue::<ValVTable>::new(Rc::new("Hello"));
+        let b = BoxValue::<ValVTable>::new(Rc::new(String::from("Hello")));
+        assert_eq!(a.as_ref(), b.as_ref());
+    }
+
+    #[test]
+    #[should_panic]
+    fn forbidden_value_mut_compare() {
+        let mut a = BoxValue::<ValVTable>::new(Rc::new("Hello"));
+        let mut b = BoxValue::<ValVTable>::new(Rc::new(String::from("Hello")));
+        assert_eq!(a.as_mut(), b.as_mut());
+    }
+
+    #[test]
+    fn value_equality() {
+        let a = Rc::new(String::from("Hello"));
+        let b = Rc::new(String::from("Hello"));
+        assert_eq!(&a, &b);
+
+        let a = BoxValue::<ValVTable>::new(Rc::new(String::from("Hello")));
+        let b = BoxValue::<ValVTable>::new(Rc::new(String::from("Hello")));
+        let c = b.clone();
+        let c_rc = b.clone().downcast::<Rc<String>>().unwrap();
+        let d = BoxValue::<ValVTable>::new(Rc::clone(&*c_rc));
+        assert_eq!(&a, &b);
+        assert_eq!(&a, &c);
+        assert_eq!(&a, &d);
+    }
+
+    // This test checks that cloning and dropping clones works correctly.
+    #[test]
+    fn clone_test() {
+        let val = BoxValue::<ValVTable>::new(Rc::new(1u8));
+        assert_eq!(&val, &val.clone());
     }
 }
 
