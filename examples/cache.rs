@@ -6,7 +6,7 @@
 //! over time, which makes it cheaper to pull the result from a table of previously computed
 //! values.
 
-use dync::{BoxValue, Value, VecDrop};
+use dync::{SmallValue, VecDrop};
 use dync_derive::dync_trait;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -59,7 +59,7 @@ fn main() {
     }
 
     {
-        let mut cache = HashMap::<u8, BoxValue<HTValueVTable>>::new();
+        let mut cache = HashMap::<u8, SmallValue<HTValueVTable>>::new();
 
         let mut int_values = VecDropCached::with_type::<Rc<[u128; 3]>>();
         let mut str_values = VecDropCached::with_type::<Rc<String>>();
@@ -71,12 +71,12 @@ fn main() {
 
             let int_value = cache
                 .entry(seed)
-                .or_insert_with(|| Value::new(Rc::new(costly_computation_int(seed))));
+                .or_insert_with(|| SmallValue::new(Rc::new(costly_computation_int(seed))));
             int_values.push_cloned(int_value.as_ref());
 
             let str_value = cache
                 .entry(seed)
-                .or_insert_with(|| Value::new(Rc::new(costly_computation_int(seed))));
+                .or_insert_with(|| SmallValue::new(Rc::new(costly_computation_int(seed))));
             str_values.push_cloned(str_value.as_ref());
         }
         println!(

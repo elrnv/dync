@@ -172,9 +172,6 @@ pub trait GetBytesRef {
 pub trait GetBytesMut: GetBytesRef {
     fn get_bytes_mut(&mut self) -> &mut [u8];
 }
-pub trait GetBytes: GetBytesMut {
-    fn get_bytes(self) -> Box<[u8]>;
-}
 
 impl GetBytesRef for Box<[u8]> {
     #[inline]
@@ -188,12 +185,6 @@ impl GetBytesMut for Box<[u8]> {
         &mut *self
     }
 }
-impl GetBytes for Box<[u8]> {
-    #[inline]
-    fn get_bytes(self) -> Box<[u8]> {
-        self
-    }
-}
 
 impl GetBytesRef for usize {
     #[inline]
@@ -205,14 +196,6 @@ impl GetBytesMut for usize {
     #[inline]
     fn get_bytes_mut(&mut self) -> &mut [u8] {
         self.as_bytes_mut()
-    }
-}
-impl GetBytes for usize {
-    #[inline]
-    fn get_bytes(self) -> Box<[u8]> {
-        // This causes an additional allocation for every function call that accepts self by value.
-        // TODO: Figure out how to eliminate this overhead.
-        Bytes::box_into_box_bytes(Box::new(self))
     }
 }
 
@@ -239,13 +222,14 @@ where
     pub(crate) vtable: Ptr<V>,
 }
 
-//pub type SmallValue<V> = Value<usize, V>;
+pub type SmallValue<V> = Value<usize, V>;
 pub type BoxValue<V> = Value<Box<[u8]>, V>;
-/*
-impl<V> SmallValue<V> {
+
+impl<V: HasDrop> SmallValue<V> {
     #[inline]
-    pub fn small<T: Any + DropBytes>(value: T) -> Option<Value<usize, V>>
-        where V: VTable<T>
+    pub fn try_new<T: Any + DropBytes>(value: T) -> Option<Value<usize, V>>
+    where
+        V: VTable<T>,
     {
         value.try_into_usize().map(|usized_value| Value {
             bytes: ManuallyDrop::new(usized_value),
@@ -253,6 +237,17 @@ impl<V> SmallValue<V> {
             vtable: Ptr::new(V::build_vtable()),
         })
     }
+    /// This function will panic if the given type does not fit into a `usize`.
+    #[inline]
+    pub fn new<T: Any + DropBytes>(value: T) -> Value<usize, V>
+    where
+        V: VTable<T>,
+    {
+        Self::try_new(value).unwrap()
+    }
+}
+
+impl<V: ?Sized + HasDrop> SmallValue<V> {
     /// Create a new `SmallValue` from a `usize` and an associated `TypeId`.
     ///
     /// # Safety
@@ -262,7 +257,7 @@ impl<V> SmallValue<V> {
     pub(crate) unsafe fn from_raw_parts(
         bytes: usize,
         type_id: TypeId,
-        vtable: Ptr<(DropFn, V)>,
+        vtable: Ptr<V>,
     ) -> Value<usize, V> {
         Value {
             bytes: ManuallyDrop::new(bytes),
@@ -270,8 +265,39 @@ impl<V> SmallValue<V> {
             vtable,
         }
     }
+
+    #[inline]
+    pub fn as_ref(&self) -> ValueRef<V> {
+        ValueRef {
+            bytes: self.bytes.get_bytes_ref(),
+            type_id: self.type_id,
+            vtable: VTableRef::Ref(&self.vtable),
+        }
+    }
+
+    #[inline]
+    pub fn as_mut(&mut self) -> ValueMut<V> {
+        ValueMut {
+            bytes: self.bytes.get_bytes_mut(),
+            type_id: self.type_id,
+            vtable: VTableRef::Ref(&self.vtable),
+        }
+    }
+
+    #[inline]
+    pub fn upcast<U: HasDrop + From<V>>(self) -> SmallValue<U>
+    where
+        V: Clone,
+    {
+        // Inhibit drop for self, it will be dropped by the returned value
+        let md = ManuallyDrop::new(self);
+        Value {
+            bytes: md.bytes,
+            type_id: md.type_id,
+            vtable: Ptr::new(U::from((*md.vtable).clone())),
+        }
+    }
 }
-*/
 
 impl<V: HasDrop> BoxValue<V> {
     #[inline]
@@ -288,7 +314,7 @@ impl<V: HasDrop> BoxValue<V> {
 }
 
 impl<V: ?Sized + HasDrop> BoxValue<V> {
-    /// Create a new `SmallValue` from boxed bytes and an associated `TypeId`.
+    /// Create a new `BoxValue` from boxed bytes and an associated `TypeId`.
     ///
     /// # Safety
     ///
@@ -343,6 +369,23 @@ impl<B: GetBytesMut, V: ?Sized + HasDebug + HasDrop> fmt::Debug for Value<B, V> 
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         unsafe { self.vtable.fmt_fn()(self.bytes.get_bytes_ref(), f) }
+    }
+}
+
+impl<V: ?Sized + Clone + HasClone + HasDrop> Clone for Value<usize, V> {
+    #[inline]
+    fn clone(&self) -> Value<usize, V> {
+        let mut bytes = 0usize;
+        // This is safe because clone_into_raw_fn will not attempt to drop the value at the
+        // destination.
+        unsafe {
+            self.vtable.clone_into_raw_fn()(self.bytes.get_bytes_ref(), bytes.as_bytes_mut());
+        }
+        Value {
+            bytes: ManuallyDrop::new(bytes),
+            type_id: self.type_id,
+            vtable: Ptr::clone(&self.vtable),
+        }
     }
 }
 
@@ -419,7 +462,7 @@ impl<T: DropBytes, V: VTable<T>> VTable<T> for (DropFn, V) {
     }
 }
 
-impl<B: GetBytes, V: ?Sized + HasDrop> Value<B, V> {
+impl<B: GetBytesMut, V: ?Sized + HasDrop> Value<B, V> {
     impl_value_base!();
 }
 

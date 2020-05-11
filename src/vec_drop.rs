@@ -827,15 +827,15 @@ mod tests {
             assert!(hashset.insert(rc_ref.clone_value()));
         }
 
-        assert!(!hashset.insert(Value::new(Rc::clone(&vec_rc[4]))));
-        assert!(!hashset.insert(Value::new(Rc::clone(&vec_rc[5]))));
+        assert!(!hashset.insert(BoxValue::new(Rc::clone(&vec_rc[4]))));
+        assert!(!hashset.insert(BoxValue::new(Rc::clone(&vec_rc[5]))));
 
         assert_eq!(hashset.len(), 4);
-        assert!(hashset.contains(&Value::new(Rc::new(1))));
-        assert!(hashset.contains(&Value::new(Rc::new(23))));
-        assert!(hashset.contains(&Value::new(Rc::new(2))));
-        assert!(hashset.contains(&Value::new(Rc::new(42))));
-        assert!(!hashset.contains(&Value::new(Rc::new(13534653))));
+        assert!(hashset.contains(&BoxValue::new(Rc::new(1))));
+        assert!(hashset.contains(&BoxValue::new(Rc::new(23))));
+        assert!(hashset.contains(&BoxValue::new(Rc::new(2))));
+        assert!(hashset.contains(&BoxValue::new(Rc::new(42))));
+        assert!(!hashset.contains(&BoxValue::new(Rc::new(13534653))));
     }
 
     #[test]
