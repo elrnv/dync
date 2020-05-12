@@ -134,18 +134,17 @@ impl<V: HasDrop> VecDrop<V> {
 impl<V: ?Sized + HasDrop> VecDrop<V> {
     /// Construct a vector with the same type as the given vector without copying its data.
     #[inline]
-    pub fn with_type_from<'a>(other: impl Into<Meta<Ptr<V>>>) -> Self
-    where
-        Ptr<V>: Clone,
-    {
+    pub fn with_type_from(other: impl Into<Meta<Ptr<V>>>) -> Self {
         VecDrop {
             data: ManuallyDrop::new(VecCopy::with_type_from(other.into())),
         }
     }
 
-    /// This is very unsafe to use.
+    /// Construct a `VecDrop` from raw bytes and type metadata.
     ///
-    /// Almost exclusively the only inputs that work here are the ones returned by
+    /// # Safety
+    ///
+    /// Almost exclusively the only inputs that are safe here are the ones returned by
     /// `VecDrop::into_raw_parts`.
     ///
     /// This function should not be used other than in internal APIs. It exists to enable the
@@ -172,18 +171,20 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub unsafe fn into_raw_parts(self) -> (Vec<u8>, usize, TypeId, Ptr<V>) {
-        // Inhibit dropping self.
-        let mut md = ManuallyDrop::new(self);
-        // Taking is safe here because data will not be used after this call since self is
-        // consumed, and self will not be dropped.
-        let VecCopy {
-            data,
-            element_size,
-            element_type_id,
-            vtable,
-        } = ManuallyDrop::take(&mut md.data);
-        (data, element_size, element_type_id, vtable)
+    pub fn into_raw_parts(self) -> (Vec<u8>, usize, TypeId, Ptr<V>) {
+        unsafe {
+            // Inhibit dropping self.
+            let mut md = ManuallyDrop::new(self);
+            // Taking is safe here because data will not be used after this call since self is
+            // consumed, and self will not be dropped.
+            let VecCopy {
+                data,
+                element_size,
+                element_type_id,
+                vtable,
+            } = ManuallyDrop::take(&mut md.data);
+            (data, element_size, element_type_id, vtable)
+        }
     }
 
     /// Retrieve the associated virtual function table.

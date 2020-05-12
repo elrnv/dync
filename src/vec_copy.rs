@@ -217,23 +217,21 @@ impl<V> VecCopy<V> {
 impl<V: ?Sized> VecCopy<V> {
     /// Construct a `VecCopy` with the same type as the given buffer without copying its data.
     #[inline]
-    pub fn with_type_from<'a>(other: impl Into<Meta<Ptr<V>>>) -> Self
-    where
-        V: 'a,
-        Ptr<V>: Clone,
-    {
+    pub fn with_type_from(other: impl Into<Meta<Ptr<V>>>) -> Self {
         let other = other.into();
         VecCopy {
             data: Vec::new(),
             element_size: other.element_size,
             element_type_id: other.element_type_id,
-            vtable: other.vtable.clone(),
+            vtable: other.vtable,
         }
     }
 
-    /// This is very unsafe to use.
+    /// Construct a `SliceCopy` from raw bytes and type metadata.
     ///
-    /// Almost exclusively the only inputs that work here are the ones returned by
+    /// # Safety
+    ///
+    /// Almost exclusively the only inputs that are safe here are the ones returned by
     /// `into_raw_parts`.
     ///
     /// This function should not be used other than in internal APIs. It exists to enable the
@@ -258,7 +256,7 @@ impl<V: ?Sized> VecCopy<V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub unsafe fn into_raw_parts(self) -> (Vec<u8>, usize, TypeId, Ptr<V>) {
+    pub fn into_raw_parts(self) -> (Vec<u8>, usize, TypeId, Ptr<V>) {
         let VecCopy {
             data,
             element_size,
@@ -734,7 +732,7 @@ impl<V> VecCopy<V> {
             debug_assert_eq!(buf.element_type_id(), TypeId::of::<I>()); // Check invariant.
             buf.reinterpret_into_vec()
                 .into_iter()
-                .map(|elem: I| cast(elem).unwrap_or(O::zero()))
+                .map(|elem: I| cast(elem).unwrap_or_else(O::zero))
                 .collect()
         }
         call_numeric_buffer_fn!( convert_into_vec::<_, T, V>(self) or { Vec::new() } )

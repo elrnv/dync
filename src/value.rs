@@ -505,7 +505,10 @@ impl<'a, V: Clone + ?Sized> VTableRef<'a, V> {
     pub fn into_owned(self) -> Ptr<V> {
         match self {
             VTableRef::Ref(v) => Ptr::new(v.clone()),
+            #[cfg(feature = "shared-vtables")]
             VTableRef::Box(v) => Ptr::from(v),
+            #[cfg(not(feature = "shared-vtables"))]
+            VTableRef::Box(v) => v,
             #[cfg(feature = "shared-vtables")]
             VTableRef::Rc(v) => Ptr::clone(&v),
         }

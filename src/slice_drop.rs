@@ -74,7 +74,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub unsafe fn into_raw_parts(self) -> (&'a [u8], usize, TypeId, VTableRef<'a, V>) {
+    pub fn into_raw_parts(self) -> (&'a [u8], usize, TypeId, VTableRef<'a, V>) {
         let SliceCopy {
             data,
             element_size,
@@ -84,9 +84,11 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
         (data, element_size, element_type_id, vtable)
     }
 
-    /// This is very unsafe to use.
+    /// Construct a `SliceDrop` from raw bytes and type metadata.
     ///
-    /// Almost exclusively the only inputs that work here are the ones returned by
+    /// # Safety
+    ///
+    /// Almost exclusively the only inputs that are safe here are the ones returned by
     /// `into_raw_parts`.
     ///
     /// This function should not be used other than in internal APIs. It exists to enable the
@@ -356,7 +358,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub unsafe fn into_raw_parts(self) -> (&'a [u8], usize, TypeId, VTableRef<'a, V>) {
+    pub fn into_raw_parts(self) -> (&'a [u8], usize, TypeId, VTableRef<'a, V>) {
         let SliceCopyMut {
             data,
             element_size,
@@ -366,9 +368,11 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
         (data, element_size, element_type_id, vtable)
     }
 
-    /// This is very unsafe to use.
+    /// Construct a `SliceDropMut` from raw bytes and type metadata.
     ///
-    /// Almost exclusively the only inputs that work here are the ones returned by
+    /// # Safety
+    ///
+    /// Almost exclusively the only inputs that are safe here are the ones returned by
     /// `into_raw_parts`.
     ///
     /// This function should not be used other than in internal APIs. It exists to enable the

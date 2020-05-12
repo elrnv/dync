@@ -93,8 +93,13 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
     ///
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
+    ///
+    /// # Safety
+    ///
+    /// Calling this function is not inherently unsafe, but using the returned values incorrectly
+    /// may cause undefined behaviour.
     #[inline]
-    pub unsafe fn into_raw_parts(self) -> (&'a [u8], usize, TypeId, VTableRef<'a, V>) {
+    pub fn into_raw_parts(self) -> (&'a [u8], usize, TypeId, VTableRef<'a, V>) {
         let SliceCopy {
             data,
             element_size,
@@ -104,10 +109,12 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
         (data, element_size, element_type_id, vtable)
     }
 
-    /// This is very unsafe to use.
+    /// Construct a `SliceCopy` from raw bytes and type metadata.
     ///
     /// Almost exclusively the only inputs that work here are the ones returned by
     /// `into_raw_parts`.
+    ///
+    /// # Safety
     ///
     /// This function should not be used other than in internal APIs. It exists to enable the
     /// `into_dyn` macro until `CoerceUsize` is stabilized.
@@ -451,7 +458,7 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub unsafe fn into_raw_parts(self) -> (&'a mut [u8], usize, TypeId, VTableRef<'a, V>) {
+    pub fn into_raw_parts(self) -> (&'a mut [u8], usize, TypeId, VTableRef<'a, V>) {
         let SliceCopyMut {
             data,
             element_size,
@@ -461,9 +468,11 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
         (data, element_size, element_type_id, vtable)
     }
 
-    /// This is very unsafe to use.
+    /// Construct a `SliceCopy` from raw bytes and type metadata.
     ///
-    /// Almost exclusively the only inputs that work here are the ones returned by
+    /// # Safety
+    ///
+    /// Almost exclusively the only inputs that are safe here are the ones returned by
     /// `into_raw_parts`.
     ///
     /// This function should not be used other than in internal APIs. It exists to enable the
