@@ -191,9 +191,13 @@ pub(crate) trait ElementBytesMut: ElementBytes {
     }
 
     /// Swap elements at indicies `i` and `j` represented by the bytes.
+    ///
+    /// If `i` is the same as `j` this function does nothing.
     #[inline]
     fn swap(&mut self, i: usize, j: usize) {
-        assert_ne!(i, j);
+        if i == j {
+            return;
+        }
         let element_size = self.element_size();
         let r_rng = self.index_byte_range(0);
         if i < j {
