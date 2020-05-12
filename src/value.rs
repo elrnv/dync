@@ -355,6 +355,9 @@ impl<B: GetBytesMut, V: ?Sized + HasDrop> Value<B, V> {
     }
 }
 
+unsafe impl<B: GetBytesMut, V: ?Sized + HasDrop + HasSend> Send for Value<B, V> {}
+unsafe impl<B: GetBytesMut, V: ?Sized + HasDrop + HasSync> Sync for Value<B, V> {}
+
 impl<B: GetBytesMut, V: ?Sized + HasDebug + HasDrop> fmt::Debug for Value<B, V> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -561,6 +564,9 @@ where
     pub(crate) type_id: TypeId,
     pub(crate) vtable: VTableRef<'a, V>,
 }
+
+unsafe impl<'a, V: ?Sized + HasDrop + HasSend> Send for ValueRef<'a, V> {}
+unsafe impl<'a, V: ?Sized + HasDrop + HasSync> Sync for ValueRef<'a, V> {}
 
 impl<'a, V: ?Sized + HasHash + HasDrop> Hash for ValueRef<'a, V> {
     #[inline]

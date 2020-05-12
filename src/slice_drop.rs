@@ -323,6 +323,9 @@ where
     }
 }
 
+unsafe impl<'a, V: ?Sized + HasDrop + HasSend> Send for SliceDrop<'a, V> {}
+unsafe impl<'a, V: ?Sized + HasDrop + HasSync> Sync for SliceDrop<'a, V> {}
+
 /*
  * Mutable Slice
  */
@@ -711,3 +714,6 @@ impl<'b, 'a: 'b, V: ?Sized + HasDrop> From<&'b SliceDropMut<'a, V>> for SliceDro
         }
     }
 }
+
+unsafe impl<'a, V: ?Sized + HasDrop + HasSend> Send for SliceDropMut<'a, V> {}
+unsafe impl<'a, V: ?Sized + HasDrop + HasSync> Sync for SliceDropMut<'a, V> {}

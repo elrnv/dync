@@ -87,6 +87,9 @@ impl<V: ?Sized + HasDrop + HasDebug> fmt::Debug for VecDrop<V> {
     }
 }
 
+unsafe impl<V: ?Sized + HasDrop + HasSend> Send for VecDrop<V> {}
+unsafe impl<V: ?Sized + HasDrop + HasSync> Sync for VecDrop<V> {}
+
 impl<V: HasDrop> VecDrop<V> {
     /// Construct an empty vector with a specific pointed-to element type.
     #[inline]
@@ -465,7 +468,7 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
     /// needed for each element.
     #[inline]
     pub fn iter<'a>(&'a self) -> impl Iterator<Item = ValueRef<'a, V>> + 'a {
-        let &Self { ref data } = self;
+        let &Self { ref data, .. } = self;
         let VecCopy {
             data,
             element_size,
@@ -482,7 +485,7 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
     pub fn get_mut(&mut self, i: usize) -> ValueMut<V> {
         debug_assert!(i < self.len());
         // Safety is guaranteed here by the value API.
-        let Self { data } = self;
+        let Self { data, .. } = self;
         let element_bytes = data.index_byte_range(i);
         let &mut VecCopy {
             ref mut data,

@@ -136,6 +136,9 @@ pub trait HasDebug {
     fn fmt_fn(&self) -> &FmtFn;
 }
 
+pub unsafe trait HasSend {}
+pub unsafe trait HasSync {}
+
 pub struct DropVTable(pub DropFn);
 pub struct CloneVTable(pub DropFn, pub CloneFn, pub CloneFromFn, pub CloneIntoRawFn);
 pub struct PartialEqVTable(pub DropFn, pub EqFn);
