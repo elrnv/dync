@@ -283,11 +283,8 @@ pub fn dync_mod(
     let mut dync_items = Vec::new();
 
     for item in item_mod.content.as_ref().unwrap().1.iter() {
-        match item {
-            Item::Trait(item_trait) => {
-                dync_items.append(&mut construct_dync_items(&item_trait, &config, &trait_map));
-            }
-            _ => {}
+        if let Item::Trait(item_trait) = item {
+            dync_items.append(&mut construct_dync_items(&item_trait, &config, &trait_map));
         }
     }
 
@@ -328,21 +325,15 @@ fn validate_item_mod(item_mod: &ItemMod) {
 fn fill_and_flatten_trait_map_from_mod(item_mod: &ItemMod, trait_map: &mut TraitMap) {
     // First we fill out all traits we know with their supertraits.
     for item in item_mod.content.as_ref().unwrap().1.iter() {
-        match item {
-            Item::Trait(item_trait) => {
-                fill_trait_map_from_item_trait(&item_trait, trait_map);
-            }
-            _ => {}
+        if let Item::Trait(item_trait) = item {
+            fill_trait_map_from_item_trait(&item_trait, trait_map);
         }
     }
 
     // Then we eliminate propagate inherited traits down to the base traits.
     for item in item_mod.content.as_ref().unwrap().1.iter() {
-        match item {
-            Item::Trait(item_trait) => {
-                flatten_inheritance(&item_trait, trait_map);
-            }
-            _ => {}
+        if let Item::Trait(item_trait) = item {
+            flatten_inheritance(&item_trait, trait_map);
         }
     }
 }
