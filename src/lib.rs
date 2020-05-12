@@ -23,6 +23,7 @@ mod vec_copy;
 mod vec_drop;
 
 pub use downcast_rs as downcast;
+pub use dync_derive::dync_mod;
 pub use dync_derive::dync_trait;
 pub use index_slice::*;
 pub use slice_copy::*;
