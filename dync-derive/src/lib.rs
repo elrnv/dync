@@ -134,10 +134,15 @@ enum Trait {
     Eq,
     Hash,
     Debug,
+    Send,
+    Sync,
     Custom(String),
 }
 
 impl Trait {
+    fn is_unsafe(&self) -> bool {
+        matches!(self, Trait::Send) || matches!(self, Trait::Sync)
+    }
     fn prefix(&self, crate_name: &str) -> TokenStream {
         if BUILTINS.contains_key(self) {
             let crate_name = Ident::new(crate_name, Span::call_site());
@@ -157,6 +162,8 @@ impl From<String> for Trait {
             "Eq" | "std::cmp::Eq" => Trait::Eq,
             "Hash" | "std::hash::Hash" => Trait::Hash,
             "Debug" | "std::fmt::Debug" => Trait::Debug,
+            "Send" | "std::marker::Send" => Trait::Send,
+            "Sync" | "std::marker::Sync" => Trait::Sync,
             x => Trait::Custom(x.to_string()),
         }
     }
@@ -171,6 +178,8 @@ impl<'a> From<Path> for Trait {
             x if x == parse_quote! { Eq } => Trait::Eq,
             x if x == parse_quote! { std::hash::Hash } => Trait::Hash,
             x if x == parse_quote! { std::fmt::Debug } => Trait::Debug,
+            x if x == parse_quote! { Send } => Trait::Send,
+            x if x == parse_quote! { Sync } => Trait::Sync,
             x => Trait::Custom(format!("{}", quote! { #x })),
         }
     }
@@ -228,6 +237,22 @@ lazy_static! {
             TraitData {
                 path: "std::fmt::Debug".to_string(),
                 methods: vec![TraitMethod::new("fmt")],
+                super_traits: BTreeSet::new(),
+            },
+        );
+        m.insert(
+            Trait::Send,
+            TraitData {
+                path: "Send".to_string(),
+                methods: vec![],
+                super_traits: BTreeSet::new(),
+            },
+        );
+        m.insert(
+            Trait::Sync,
+            TraitData {
+                path: "Sync".to_string(),
+                methods: vec![],
                 super_traits: BTreeSet::new(),
             },
         );
@@ -524,8 +549,13 @@ fn construct_dync_items(
 
         //eprintln!("{}", &methods);
 
+        let maybe_unsafe = if super_trait_key.is_unsafe() {
+            quote! { unsafe }
+        } else {
+            TokenStream::new()
+        };
         has_impls.push(parse_quote! {
-            impl #prefix #has_trait for #vtable_name {
+            #maybe_unsafe impl #prefix #has_trait for #vtable_name {
                 #methods
             }
         });

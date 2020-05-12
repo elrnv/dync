@@ -20,7 +20,7 @@ use crate::VecCopy;
 pub trait Elem: Any + DropBytes {}
 impl<T> Elem for T where T: Any + DropBytes {}
 
-pub struct VecDrop<V>
+pub struct VecDrop<V = (DropFn, ())>
 where
     V: ?Sized + HasDrop,
 {

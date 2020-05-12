@@ -145,6 +145,8 @@ pub struct PartialEqVTable(pub DropFn, pub EqFn);
 pub struct EqVTable(pub DropFn, pub EqFn);
 pub struct HashVTable(pub DropFn, pub HashFn);
 pub struct DebugVTable(pub DropFn, pub FmtFn);
+pub struct SendVTable(pub DropFn);
+pub struct SyncVTable(pub DropFn);
 
 impl<T: DropBytes> VTable<T> for DropVTable {
     fn build_vtable() -> Self {
