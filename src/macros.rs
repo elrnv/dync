@@ -5,7 +5,15 @@
 /// Applies `$fn` to an `VecCopy` mapping valid numeric data types by corresponding generic
 /// parameters.  For example, passing an `VecCopy` containing data of type `u8` will cause this
 /// macro to call `$fn` with type parameter `u8` like `$fn::<u8>(buffer)`.
+///
+/// # Note
+///
+/// Since the introduction o virtual tables to this crate, this mechanism is not as useful since
+/// the behaviours of internal elements can now be passed through traits. For instance, the
+/// `Display` example below could be replaced by using a virtual table for the `Display` trait.
+///
 /// # Examples
+///
 /// ```rust
 /// # #[macro_use] extern crate dync;
 /// # use std::fmt;

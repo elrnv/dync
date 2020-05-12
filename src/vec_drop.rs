@@ -11,6 +11,9 @@ use std::boxed::Box as Ptr;
 #[cfg(feature = "shared-vtables")]
 use std::rc::Rc as Ptr;
 
+#[cfg(feature = "numeric")]
+use num_traits::{cast, NumCast, Zero};
+
 use crate::slice_drop::*;
 use crate::traits::*;
 use crate::value::*;
@@ -615,6 +618,34 @@ impl<V: HasDrop + HasClone> VecDrop<V> {
     }
 }
 
+impl<V: HasDrop> VecDrop<V> {
+    #[cfg(feature = "numeric")]
+    /// Cast a numeric `VecDrop` into the given output `Vec` type.
+    ///
+    /// This only works if the contained element is `Copy`.
+    pub fn cast_into_vec<T>(&self) -> Option<Vec<T>>
+    where
+        T: Elem + Copy + NumCast + Zero,
+    {
+        use crate::CopyElem;
+        // Helper function (generic on the input) to convert the given VecDrop into Vec.
+        unsafe fn convert_into_vec<I, O, V>(buf: &VecCopy<V>) -> Option<Vec<O>>
+        where
+            I: CopyElem + Any + NumCast,
+            O: CopyElem + NumCast + Zero,
+        {
+            debug_assert_eq!(buf.element_type_id(), TypeId::of::<I>()); // Check invariant.
+            Some(
+                buf.reinterpret_as_slice()
+                    .iter()
+                    .map(|elem: &I| cast(*elem).unwrap_or_else(O::zero))
+                    .collect(),
+            )
+        }
+        call_numeric_buffer_fn!( convert_into_vec::<_, T, V>(&self.data) or { None } )
+    }
+}
+
 impl<V: ?Sized + HasDrop + HasClone> VecDrop<V> {
     /// Resizes the buffer in-place to store `new_len` elements and returns an optional
     /// mutable reference to `Self`.
@@ -1172,5 +1203,32 @@ mod tests {
     fn clone_test() {
         let buf = VecDropAll::with_size::<Rc<u8>>(3, Rc::new(1u8));
         assert_eq!(&buf, &buf.clone());
+    }
+
+    #[cfg(feature = "numeric")]
+    #[test]
+    fn convert_float_test() {
+        let vecf64 = vec![1f64, -3.0, 10.02, -23.1, 32e-1];
+        let buf: VecDrop = VecDrop::from(vecf64.clone()); // Convert into buffer
+        let nu_vec: Vec<f32> = buf.cast_into_vec().unwrap(); // Convert back into vec
+        let vecf32 = vec![1f32, -3.0, 10.02, -23.1, 32e-1];
+        assert_eq!(vecf32, nu_vec);
+
+        let buf: VecDrop = VecDrop::from(vecf32.clone()); // Convert into buffer
+        let nu_vec: Vec<f64> = buf.cast_into_vec().unwrap(); // Convert back into vec
+        for (&a, &b) in vecf64.iter().zip(nu_vec.iter()) {
+            assert!((a - b).abs() < 1e-6f64 * f64::max(a, b).abs());
+        }
+
+        let vecf64 = vec![1f64, -3.1, 100.2, -2.31, 3.2, 4e2, -1e23];
+        let buf: VecDrop = VecDrop::from(vecf64.clone()); // Convert into buffer
+        let nu_vec: Vec<f32> = buf.cast_into_vec().unwrap(); // Convert back into vec
+        let vecf32 = vec![1f32, -3.1, 100.2, -2.31, 3.2, 4e2, -1e23];
+        assert_eq!(vecf32, nu_vec);
+        let buf: VecDrop = VecDrop::from(vecf32.clone()); // Convert into buffer
+        let nu_vec: Vec<f64> = buf.cast_into_vec().unwrap(); // Convert back into vec
+        for (&a, &b) in vecf64.iter().zip(nu_vec.iter()) {
+            assert!((a - b).abs() < 1e-6 * f64::max(a, b).abs());
+        }
     }
 }

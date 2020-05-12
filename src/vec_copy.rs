@@ -726,7 +726,7 @@ impl<V> VecCopy<V> {
         // Helper function (generic on the input) to convert the given VecCopy into Vec.
         unsafe fn convert_into_vec<I, O, V>(buf: VecCopy<V>) -> Vec<O>
         where
-            I: Any + NumCast,
+            I: CopyElem + Any + NumCast,
             O: CopyElem + NumCast + Zero,
         {
             debug_assert_eq!(buf.element_type_id(), TypeId::of::<I>()); // Check invariant.
