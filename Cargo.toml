@@ -16,7 +16,7 @@ keywords = ["dyn", "trait", "vec", "any"]
 travis-ci = { repository = "elrnv/dync", branch = "master" }
 
 [dependencies]
-dync-derive = { path = "dync-derive", version = "0.3" }
+dync-derive = { path = "dync-derive", version = "0.4" }
 reinterpret = "0.2"
 num-traits = { version = "0.2", optional = true }
 downcast-rs = "1.1.1"
