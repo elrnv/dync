@@ -6,10 +6,9 @@ use std::{
     slice,
 };
 
-#[cfg(not(feature = "shared-vtables"))]
+// At the time of this writing, there is no evidence that there is a significant benefit in sharing
+// vtables via Rc or Arc, but to make potential future refactoring easier we use the Ptr alias.
 use std::boxed::Box as Ptr;
-#[cfg(feature = "shared-vtables")]
-use std::rc::Rc as Ptr;
 
 #[cfg(feature = "numeric")]
 use num_traits::{cast, NumCast, Zero};

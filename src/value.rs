@@ -10,10 +10,9 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::mem::{ManuallyDrop, MaybeUninit};
 
-#[cfg(not(feature = "shared-vtables"))]
+// At the time of this writing, there is no evidence that there is a significant benefit in sharing
+// vtables via Rc or Arc, but to make potential future refactoring easier we use the Ptr alias.
 use std::boxed::Box as Ptr;
-#[cfg(feature = "shared-vtables")]
-use std::rc::Rc as Ptr;
 
 use crate::bytes::*;
 use crate::traits::*;
@@ -560,7 +559,7 @@ where
     Ref(&'a V),
     Box(Box<V>),
     #[cfg(feature = "shared-vtables")]
-    Rc(Ptr<V>),
+    Rc(Rc<V>),
 }
 
 impl<'a, V: Clone + ?Sized> VTableRef<'a, V> {
@@ -570,7 +569,7 @@ impl<'a, V: Clone + ?Sized> VTableRef<'a, V> {
             VTableRef::Ref(v) => v.clone(),
             VTableRef::Box(v) => *v,
             #[cfg(feature = "shared-vtables")]
-            VTableRef::Rc(v) => Ptr::try_unwrap(v).unwrap_or_else(|v| (*v).clone()),
+            VTableRef::Rc(v) => Rc::try_unwrap(v).unwrap_or_else(|v| (*v).clone()),
         }
     }
 
@@ -578,12 +577,9 @@ impl<'a, V: Clone + ?Sized> VTableRef<'a, V> {
     pub fn into_owned(self) -> Ptr<V> {
         match self {
             VTableRef::Ref(v) => Ptr::new(v.clone()),
-            #[cfg(feature = "shared-vtables")]
-            VTableRef::Box(v) => Ptr::from(v),
-            #[cfg(not(feature = "shared-vtables"))]
             VTableRef::Box(v) => v,
             #[cfg(feature = "shared-vtables")]
-            VTableRef::Rc(v) => Ptr::clone(&v),
+            VTableRef::Rc(v) => Rc::clone(&v),
         }
     }
 }

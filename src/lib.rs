@@ -59,9 +59,8 @@ macro_rules! from_dyn {
         fn from_dyn<V: $trait>(vec: $crate::$vec<dyn $trait>) -> $crate::$vec<V> {
             unsafe {
                 let (data, size, id, vtable) = vec.into_raw_parts();
-                #[cfg(feature = "shared-vtables")]
-                let updated_vtable: std::rc::Rc<V> = vtable.downcast_rc().ok().unwrap();
-                #[cfg(not(feature = "shared-vtables"))]
+                // If vtables were shared with Rc, we would use this:
+                //let updated_vtable: std::rc::Rc<V> = vtable.downcast_rc().ok().unwrap();
                 let updated_vtable: Box<V> = vtable.downcast().ok().unwrap();
                 $vec::from_raw_parts(data, size, id, updated_vtable)
             }
@@ -82,10 +81,11 @@ macro_rules! from_dyn {
                         let updated_vtable: Box<$vtable> = v.downcast().unwrap();
                         $slice::from_raw_parts(data, size, id, updated_vtable)
                     }
-                    //$crate::VTableRef::Rc(v) => {
-                    //    let updated_vtable: std::rc::Rc<$vtable> = v.downcast().unwrap();
-                    //    $slice::from_raw_parts(data, size, id, updated_vtable)
-                    //}
+                    #[cfg(feature = "shared-vtables")]
+                    $crate::VTableRef::Rc(v) => {
+                        let updated_vtable: std::rc::Rc<$vtable> = v.downcast().unwrap();
+                        $slice::from_raw_parts(data, size, id, updated_vtable)
+                    }
                 }
             }
         }
@@ -119,9 +119,8 @@ macro_rules! into_dyn {
         fn into_dyn<V: 'static + $trait>(vec: $crate::$vec<V>) -> $crate::$vec<dyn $trait> {
             unsafe {
                 let (data, size, id, vtable) = vec.into_raw_parts();
-                #[cfg(feature = "shared-vtables")]
-                let updated_vtable: std::rc::Rc<dyn $trait> = vtable;
-                #[cfg(not(feature = "shared-vtables"))]
+                // If vtables were shared with Rc, we would use this:
+                //let updated_vtable: std::rc::Rc<dyn $trait> = vtable;
                 let updated_vtable: Box<dyn $trait> = vtable;
                 $vec::from_raw_parts(data, size, id, updated_vtable)
             }
