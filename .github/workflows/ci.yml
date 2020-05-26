@@ -28,6 +28,10 @@ jobs:
         run: cargo test --verbose
       - name: Test all features
         run: cargo test --all-features --verbose
+      - name: Install Valgrind
+        run: sudo apt install valgrind
+      - name: Run Valgrind
+        run: ./valgrind_check.sh
 
   clippy:
     name: "Clippy (stable)"
