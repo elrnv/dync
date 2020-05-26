@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::prelude::*;
@@ -9,12 +10,20 @@ static SEED: [u8; 32] = [3; 32];
 
 #[dync_trait]
 pub trait DynClone: Clone {}
-impl DynClone for [i64; 3] {}
+impl<T> DynClone for T where T: Clone {}
 
 #[inline]
 fn make_random_vec(n: usize) -> Vec<[i64; 3]> {
     let mut rng: StdRng = SeedableRng::from_seed(SEED);
     (0..n).map(move |_| [rng.gen::<i64>(); 3]).collect()
+}
+
+#[inline]
+fn make_random_vec_arc(n: usize) -> Vec<Arc<[i64; 3]>> {
+    make_random_vec(n)
+        .into_iter()
+        .map(|arr| Arc::new(arr))
+        .collect()
 }
 
 #[inline]
@@ -29,6 +38,17 @@ fn make_random_vec_any(n: usize) -> Vec<Box<dyn Any>> {
 }
 
 #[inline]
+fn make_random_vec_arc_any(n: usize) -> Vec<Arc<dyn Any + Send + Sync>> {
+    let mut rng: StdRng = SeedableRng::from_seed(SEED);
+    (0..n)
+        .map(move |_| {
+            let b: Arc<dyn Any + Send + Sync> = Arc::new([rng.gen::<i64>(); 3]);
+            b
+        })
+        .collect()
+}
+
+#[inline]
 fn make_random_vec_copy(n: usize) -> VecCopy {
     make_random_vec(n).into()
 }
@@ -36,6 +56,11 @@ fn make_random_vec_copy(n: usize) -> VecCopy {
 #[inline]
 fn make_random_vec_drop(n: usize) -> VecDrop<DynCloneVTable> {
     make_random_vec(n).into()
+}
+
+#[inline]
+fn make_random_vec_drop_arc(n: usize) -> VecDrop<DynCloneVTable> {
+    make_random_vec_arc(n).into()
 }
 
 #[inline]
@@ -75,6 +100,17 @@ fn vec_any_compute(v: &mut Vec<Box<dyn Any>>) {
 }
 
 #[inline]
+fn vec_arc_any_compute(v: &mut Vec<Arc<dyn Any + Send + Sync>>) {
+    for a in v.iter_mut() {
+        let a = Arc::get_mut(a).unwrap().downcast_mut::<[i64; 3]>().unwrap();
+        let res = compute(a[0], a[1], a[2]);
+        a[0] = res[0];
+        a[1] = res[1];
+        a[2] = res[2];
+    }
+}
+
+#[inline]
 fn vec_copy_compute<V>(v: &mut VecCopy<V>) {
     for a in v.iter_mut() {
         let a = a.downcast::<[i64; 3]>().unwrap();
@@ -82,6 +118,18 @@ fn vec_copy_compute<V>(v: &mut VecCopy<V>) {
         a[0] = res[0];
         a[1] = res[1];
         a[2] = res[2];
+    }
+}
+
+#[inline]
+fn vec_drop_arc_compute<V: Clone + HasDrop>(v: &mut VecDrop<V>) {
+    for a in v.iter_mut() {
+        let a = a.downcast::<Arc<[i64; 3]>>().unwrap();
+        let res = compute(a[0], a[1], a[2]);
+        let a_mut = Arc::get_mut(a).unwrap();
+        a_mut[0] = res[0];
+        a_mut[1] = res[1];
+        a_mut[2] = res[2];
     }
 }
 
@@ -162,6 +210,13 @@ fn type_erasure(c: &mut Criterion) {
         .zip(v5.iter())
         .all(|(a, b)| *a == *b.downcast::<[i64; 3]>().unwrap()));
 
+    let mut v6 = make_random_vec_drop_arc(buf_size);
+    vec_drop_arc_compute(&mut v6);
+    assert!(v0
+        .iter()
+        .zip(v6.iter())
+        .all(|(a, b)| *a == **b.downcast::<Arc<[i64; 3]>>().unwrap()));
+
     for &buf_size in &[3000, 30_000, 90_000, 180_000, 300_000, 600_000, 900_000] {
         group.bench_function(BenchmarkId::new("Vec<[i64;3]>", buf_size), |b| {
             let mut v = make_random_vec(buf_size);
@@ -197,6 +252,22 @@ fn type_erasure(c: &mut Criterion) {
                 vec_dyn_compute(&mut v);
             })
         });
+
+        if buf_size < 600_000 {
+            group.bench_function(BenchmarkId::new("Vec<Arc<dyn Any>>", buf_size), |b| {
+                let mut v = make_random_vec_arc_any(buf_size);
+                b.iter(|| {
+                    vec_arc_any_compute(&mut v);
+                })
+            });
+
+            group.bench_function(BenchmarkId::new("VecDrop<Arc>", buf_size), |b| {
+                let mut v = make_random_vec_drop_arc(buf_size);
+                b.iter(|| {
+                    vec_drop_arc_compute(&mut v);
+                })
+            });
+        }
 
         if buf_size < 180_000 {
             group.bench_function(BenchmarkId::new("VecDrop By Value", buf_size), |b| {
