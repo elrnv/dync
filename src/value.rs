@@ -8,7 +8,7 @@
 use std::any::{Any, TypeId};
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::mem::ManuallyDrop;
+use std::mem::{ManuallyDrop, MaybeUninit};
 
 #[cfg(not(feature = "shared-vtables"))]
 use std::boxed::Box as Ptr;
@@ -172,47 +172,47 @@ impl<V: HasDebug> HasDebug for (DropFn, V) {
 
 // Helper trait for calling trait functions that take bytes.
 pub trait GetBytesRef {
-    fn get_bytes_ref(&self) -> &[u8];
+    fn get_bytes_ref(&self) -> &[MaybeUninit<u8>];
 }
 pub trait GetBytesMut: GetBytesRef {
-    fn get_bytes_mut(&mut self) -> &mut [u8];
+    fn get_bytes_mut(&mut self) -> &mut [MaybeUninit<u8>];
 }
 
-impl GetBytesRef for Box<[u8]> {
+impl GetBytesRef for Box<[MaybeUninit<u8>]> {
     #[inline]
-    fn get_bytes_ref(&self) -> &[u8] {
+    fn get_bytes_ref(&self) -> &[MaybeUninit<u8>] {
         &*self
     }
 }
-impl GetBytesMut for Box<[u8]> {
+impl GetBytesMut for Box<[MaybeUninit<u8>]> {
     #[inline]
-    fn get_bytes_mut(&mut self) -> &mut [u8] {
+    fn get_bytes_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         &mut *self
     }
 }
 
-impl GetBytesRef for usize {
+impl GetBytesRef for MaybeUninit<usize> {
     #[inline]
-    fn get_bytes_ref(&self) -> &[u8] {
+    fn get_bytes_ref(&self) -> &[MaybeUninit<u8>] {
         self.as_bytes()
     }
 }
-impl GetBytesMut for usize {
+impl GetBytesMut for MaybeUninit<usize> {
     #[inline]
-    fn get_bytes_mut(&mut self) -> &mut [u8] {
+    fn get_bytes_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self.as_bytes_mut()
     }
 }
 
-impl GetBytesRef for [u8] {
+impl GetBytesRef for [MaybeUninit<u8>] {
     #[inline]
-    fn get_bytes_ref(&self) -> &[u8] {
+    fn get_bytes_ref(&self) -> &[MaybeUninit<u8>] {
         self
     }
 }
-impl GetBytesMut for [u8] {
+impl GetBytesMut for [MaybeUninit<u8>] {
     #[inline]
-    fn get_bytes_mut(&mut self) -> &mut [u8] {
+    fn get_bytes_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self
     }
 }
@@ -224,15 +224,15 @@ where
 {
     pub(crate) bytes: ManuallyDrop<B>,
     pub(crate) type_id: TypeId,
-    pub(crate) vtable: Ptr<V>,
+    pub(crate) vtable: ManuallyDrop<Ptr<V>>,
 }
 
-pub type SmallValue<V> = Value<usize, V>;
-pub type BoxValue<V> = Value<Box<[u8]>, V>;
+pub type SmallValue<V> = Value<MaybeUninit<usize>, V>;
+pub type BoxValue<V> = Value<Box<[MaybeUninit<u8>]>, V>;
 
 impl<V: HasDrop> SmallValue<V> {
     #[inline]
-    pub fn try_new<T: Any + DropBytes>(value: T) -> Option<Value<usize, V>>
+    pub fn try_new<T: Any + DropBytes>(value: T) -> Option<Value<MaybeUninit<usize>, V>>
     where
         V: VTable<T>,
     {
@@ -241,12 +241,12 @@ impl<V: HasDrop> SmallValue<V> {
         val.try_into_usize().map(|usized_value| Value {
             bytes: ManuallyDrop::new(usized_value),
             type_id: TypeId::of::<T>(),
-            vtable: Ptr::new(V::build_vtable()),
+            vtable: ManuallyDrop::new(Ptr::new(V::build_vtable())),
         })
     }
     /// This function will panic if the given type does not fit into a `usize`.
     #[inline]
-    pub fn new<T: Any + DropBytes>(value: T) -> Value<usize, V>
+    pub fn new<T: Any + DropBytes>(value: T) -> Value<MaybeUninit<usize>, V>
     where
         V: VTable<T>,
     {
@@ -262,14 +262,14 @@ impl<V: ?Sized + HasDrop> SmallValue<V> {
     /// The given bytes must be the correct representation of the type given `TypeId`.
     #[inline]
     pub(crate) unsafe fn from_raw_parts(
-        bytes: usize,
+        bytes: MaybeUninit<usize>,
         type_id: TypeId,
         vtable: Ptr<V>,
-    ) -> Value<usize, V> {
+    ) -> Value<MaybeUninit<usize>, V> {
         Value {
             bytes: ManuallyDrop::new(bytes),
             type_id,
-            vtable,
+            vtable: ManuallyDrop::new(vtable),
         }
     }
 
@@ -279,25 +279,51 @@ impl<V: ?Sized + HasDrop> SmallValue<V> {
         V: Clone,
     {
         // Inhibit drop for self, it will be dropped by the returned value
-        let md = ManuallyDrop::new(self);
-        Value {
+        let mut md = ManuallyDrop::new(self);
+        let output = Value {
             bytes: md.bytes,
             type_id: md.type_id,
-            vtable: Ptr::new(U::from((*md.vtable).clone())),
+            vtable: ManuallyDrop::new(Ptr::new(U::from((**md.vtable).clone()))),
+        };
+
+        // Manually drop the old vtable.
+        // This is safe since the old vtable will not be used again since self is consumed.
+        // It will also not be double dropped since it is cloned above.
+        unsafe {
+            ManuallyDrop::drop(&mut md.vtable);
         }
+
+        output
+    }
+
+    /// Convert this value into its destructured parts.
+    ///
+    /// The caller must insure that the memory allocated by the returned bytes is freed.
+    #[inline]
+    pub fn into_raw_parts(self) -> (MaybeUninit<usize>, TypeId, Ptr<V>) {
+        // Inhibit drop for self.
+        let mut md = ManuallyDrop::new(self);
+
+        // Pass ownership of the vtable and bytes to the caller. This allows the table to be
+        // dropped automatically if the caller ignores it, however the data represented by bytes
+        // is leaked.
+        let vtable = unsafe { ManuallyDrop::take(&mut md.vtable) };
+        let bytes = unsafe { ManuallyDrop::take(&mut md.bytes) };
+
+        (bytes, md.type_id, vtable)
     }
 }
 
 impl<V: HasDrop> BoxValue<V> {
     #[inline]
-    pub fn new<T: Any + DropBytes>(value: T) -> Value<Box<[u8]>, V>
+    pub fn new<T: Any + DropBytes>(value: T) -> Value<Box<[MaybeUninit<u8>]>, V>
     where
         V: VTable<T>,
     {
         Value {
             bytes: ManuallyDrop::new(Bytes::box_into_box_bytes(Box::new(value))),
             type_id: TypeId::of::<T>(),
-            vtable: Ptr::new(V::build_vtable()),
+            vtable: ManuallyDrop::new(Ptr::new(V::build_vtable())),
         }
     }
 }
@@ -310,14 +336,14 @@ impl<V: ?Sized + HasDrop> BoxValue<V> {
     /// The given bytes must be the correct representation of the type given `TypeId`.
     #[inline]
     pub(crate) unsafe fn from_raw_parts(
-        bytes: Box<[u8]>,
+        bytes: Box<[MaybeUninit<u8>]>,
         type_id: TypeId,
         vtable: Ptr<V>,
-    ) -> Value<Box<[u8]>, V> {
+    ) -> Value<Box<[MaybeUninit<u8>]>, V> {
         Value {
             bytes: ManuallyDrop::new(bytes),
             type_id,
-            vtable,
+            vtable: ManuallyDrop::new(vtable),
         }
     }
 
@@ -327,12 +353,39 @@ impl<V: ?Sized + HasDrop> BoxValue<V> {
         V: Clone,
     {
         // Inhibit drop for self, it will be dropped by the returned value
-        let md = ManuallyDrop::new(self);
-        Value {
-            bytes: md.bytes.clone(),
+        let mut md = ManuallyDrop::new(self);
+        // It is safe to take the bytes from md since self is consumed and will not be used later.
+        let output = Value {
+            bytes: ManuallyDrop::new(unsafe { ManuallyDrop::take(&mut md.bytes) }),
             type_id: md.type_id,
-            vtable: Ptr::new(U::from((*md.vtable).clone())),
+            vtable: ManuallyDrop::new(Ptr::new(U::from((**md.vtable).clone()))),
+        };
+
+        // Manually drop the old vtable.
+        // This is safe since the old vtable will not be used again since self is consumed.
+        // It will also not be double dropped since it is cloned above.
+        unsafe {
+            ManuallyDrop::drop(&mut md.vtable);
         }
+
+        output
+    }
+
+    /// Convert this value into its destructured parts.
+    ///
+    /// The caller must insure that the memory allocated by the returned bytes is freed.
+    #[inline]
+    pub fn into_raw_parts(self) -> (Box<[MaybeUninit<u8>]>, TypeId, Ptr<V>) {
+        // Inhibit drop for self.
+        let mut md = ManuallyDrop::new(self);
+
+        // Pass ownership of the vtable and bytes to the caller. This allows the table to be
+        // dropped automatically if the caller ignores it, however the data represented by bytes
+        // is leaked.
+        let vtable = unsafe { ManuallyDrop::take(&mut md.vtable) };
+        let bytes = unsafe { ManuallyDrop::take(&mut md.bytes) };
+
+        (bytes, md.type_id, vtable)
     }
 }
 
@@ -365,16 +418,16 @@ impl<B: GetBytesMut, V: ?Sized + HasDebug + HasDrop> fmt::Debug for Value<B, V> 
     }
 }
 
-impl<V: ?Sized + Clone + HasClone + HasDrop> Clone for Value<usize, V> {
+impl<V: ?Sized + Clone + HasClone + HasDrop> Clone for Value<MaybeUninit<usize>, V> {
     #[inline]
-    fn clone(&self) -> Value<usize, V> {
+    fn clone(&self) -> Value<MaybeUninit<usize>, V> {
         self.as_ref().clone_small_value()
     }
 }
 
-impl<V: ?Sized + Clone + HasClone + HasDrop> Clone for Value<Box<[u8]>, V> {
+impl<V: ?Sized + Clone + HasClone + HasDrop> Clone for Value<Box<[MaybeUninit<u8>]>, V> {
     #[inline]
-    fn clone(&self) -> Value<Box<[u8]>, V> {
+    fn clone(&self) -> Value<Box<[MaybeUninit<u8>]>, V> {
         self.as_ref().clone_value()
     }
 }
@@ -384,8 +437,11 @@ impl<B: GetBytesMut, V: ?Sized + HasDrop> Drop for Value<B, V> {
     fn drop(&mut self) {
         unsafe {
             // This is safe since self will never be used after this call.
-            let mut bytes = ManuallyDrop::take(&mut self.bytes);
-            self.vtable.drop_fn()(bytes.get_bytes_mut())
+            self.vtable.drop_fn()(self.bytes.get_bytes_mut());
+
+            // Manually drop what we promised.
+            ManuallyDrop::drop(&mut self.bytes);
+            ManuallyDrop::drop(&mut self.vtable);
         }
     }
 }
@@ -446,32 +502,49 @@ impl<B: GetBytesMut, V: ?Sized + HasDrop> Value<B, V> {
     impl_value_base!();
 }
 
-impl<V: ?Sized + HasDrop> Value<Box<[u8]>, V> {
+impl<V: ?Sized + HasDrop> Value<Box<[MaybeUninit<u8>]>, V> {
     /// Downcast this value reference into a boxed `T` type. Return `None` if the downcast fails.
     #[inline]
     pub fn downcast<T: 'static>(self) -> Option<Box<T>> {
-        // Inhibit drop of self, since it will be dropped by the box.
+        // Override the Drop implementation, since we don't actually want to drop the contents
+        // here, just the vtable.
         let mut s = ManuallyDrop::new(self);
-        // This is safe since we check that self.bytes represent a `T`.
-        if s.is::<T>() {
+        let output = if s.is::<T>() {
+            // This is safe since we check that self.bytes represents a `T`.
             Some(unsafe { Bytes::box_from_box_bytes(ManuallyDrop::take(&mut s.bytes)) })
         } else {
             None
+        };
+        // We are done with self, dropping the remaining fields here to avoid memory leaks.
+        // This is safe since `s` will not be used again.
+        unsafe {
+            // Note that TypeId is a Copy type and does not need to be manually dropped.
+            ManuallyDrop::drop(&mut s.vtable);
         }
+        output
     }
 }
 
-impl<V: ?Sized + HasDrop> Value<usize, V> {
+impl<V: ?Sized + HasDrop> Value<MaybeUninit<usize>, V> {
     /// Downcast this value reference into a boxed `T` type. Return `None` if the downcast fails.
     #[inline]
     pub fn downcast<T: 'static>(self) -> Option<T> {
+        // Override the Drop implementation, since we don't actually want to drop the contents
+        // here, just the vtable.
         let mut s = ManuallyDrop::new(self);
         // This is safe since we check that self.bytes represent a `T`.
-        if s.is::<T>() {
+        let output = if s.is::<T>() {
             unsafe { Bytes::try_from_usize(ManuallyDrop::take(&mut s.bytes)) }
         } else {
             None
+        };
+        // We are done with self, dropping the remaining fields here to avoid memory leaks.
+        // This is safe since `s` will not be used again.
+        unsafe {
+            // Note that TypeId is a Copy type and does not need to be manually dropped.
+            ManuallyDrop::drop(&mut s.vtable);
         }
+        output
     }
 }
 
@@ -563,7 +636,7 @@ pub struct ValueRef<'a, V>
 where
     V: ?Sized + HasDrop,
 {
-    pub(crate) bytes: &'a [u8],
+    pub(crate) bytes: &'a [MaybeUninit<u8>],
     pub(crate) type_id: TypeId,
     pub(crate) vtable: VTableRef<'a, V>,
 }
@@ -643,7 +716,7 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
     /// The given bytes must be the correct representation of the type given `TypeId`.
     #[inline]
     pub(crate) unsafe fn from_raw_parts(
-        bytes: &'a [u8],
+        bytes: &'a [MaybeUninit<u8>],
         type_id: TypeId,
         vtable: impl Into<VTableRef<'a, V>>,
     ) -> ValueRef<'a, V> {
@@ -659,14 +732,14 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
     /// Unlike the `Clone` trait, this function will produce an owned clone of the value pointed to
     /// by this value reference.
     #[inline]
-    pub fn clone_value(&self) -> Value<Box<[u8]>, V>
+    pub fn clone_value(&self) -> Value<Box<[MaybeUninit<u8>]>, V>
     where
         V: HasClone + Clone,
     {
         Value {
             bytes: ManuallyDrop::new(unsafe { self.vtable.as_ref().clone_fn()(&self.bytes) }),
             type_id: self.type_id,
-            vtable: Ptr::from(self.vtable.as_ref().clone()),
+            vtable: ManuallyDrop::new(Ptr::from(self.vtable.as_ref().clone())),
         }
     }
 
@@ -678,11 +751,11 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
     /// This version of `clone_value` tries to fit the underlying value into a `usize` sized value,
     /// and panics if that fails.
     #[inline]
-    pub fn clone_small_value(&self) -> Value<usize, V>
+    pub fn clone_small_value(&self) -> Value<MaybeUninit<usize>, V>
     where
         V: HasClone + Clone,
     {
-        let mut bytes = 0usize;
+        let mut bytes = MaybeUninit::uninit();
         // This is safe because clone_into_raw_fn will not attempt to drop the value at the
         // destination.
         unsafe {
@@ -691,7 +764,7 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
         Value {
             bytes: ManuallyDrop::new(bytes),
             type_id: self.type_id,
-            vtable: Ptr::from(self.vtable.as_ref().clone()),
+            vtable: ManuallyDrop::new(Ptr::from(self.vtable.as_ref().clone())),
         }
     }
 
@@ -743,7 +816,7 @@ pub struct ValueMut<'a, V>
 where
     V: ?Sized + HasDrop,
 {
-    pub(crate) bytes: &'a mut [u8],
+    pub(crate) bytes: &'a mut [MaybeUninit<u8>],
     pub(crate) type_id: TypeId,
     pub(crate) vtable: VTableRef<'a, V>,
 }
@@ -835,14 +908,14 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
     /// Unlike the `Clone` trait, this function will produce an owned clone of the value pointed to
     /// by this value reference.
     #[inline]
-    pub fn clone_value(&self) -> Value<Box<[u8]>, V>
+    pub fn clone_value(&self) -> Value<Box<[MaybeUninit<u8>]>, V>
     where
         V: HasClone + Clone,
     {
         Value {
             bytes: ManuallyDrop::new(unsafe { self.vtable.as_ref().clone_fn()(&self.bytes) }),
             type_id: self.type_id,
-            vtable: Ptr::from(self.vtable.as_ref().clone()),
+            vtable: ManuallyDrop::new(Ptr::from(self.vtable.as_ref().clone())),
         }
     }
 
@@ -854,11 +927,11 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
     /// This version of `clone_value` tries to fit the underlying value into a `usize` sized value,
     /// and panics if that fails.
     #[inline]
-    pub fn clone_small_value(&self) -> Value<usize, V>
+    pub fn clone_small_value(&self) -> Value<MaybeUninit<usize>, V>
     where
         V: HasClone + Clone,
     {
-        let mut bytes = 0usize;
+        let mut bytes = MaybeUninit::uninit();
         // This is safe because clone_into_raw_fn will not attempt to drop the value at the
         // destination.
         unsafe {
@@ -867,7 +940,7 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
         Value {
             bytes: ManuallyDrop::new(bytes),
             type_id: self.type_id,
-            vtable: Ptr::from(self.vtable.as_ref().clone()),
+            vtable: ManuallyDrop::new(Ptr::from(self.vtable.as_ref().clone())),
         }
     }
 
@@ -878,7 +951,7 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
     /// The given bytes must be the correct representation of the type given `TypeId`.
     #[inline]
     pub(crate) unsafe fn from_raw_parts(
-        bytes: &'a mut [u8],
+        bytes: &'a mut [MaybeUninit<u8>],
         type_id: TypeId,
         vtable: impl Into<VTableRef<'a, V>>,
     ) -> ValueMut<'a, V> {
@@ -947,7 +1020,7 @@ pub struct CopyValueRef<'a, V = ()>
 where
     V: ?Sized,
 {
-    pub(crate) bytes: &'a [u8],
+    pub(crate) bytes: &'a [MaybeUninit<u8>],
     pub(crate) type_id: TypeId,
     pub(crate) vtable: VTableRef<'a, V>,
 }
@@ -977,7 +1050,7 @@ impl<'a, V: ?Sized> CopyValueRef<'a, V> {
     /// The given bytes must be the correct representation of the type given `TypeId`.
     #[inline]
     pub(crate) unsafe fn from_raw_parts(
-        bytes: &'a [u8],
+        bytes: &'a [MaybeUninit<u8>],
         type_id: TypeId,
         vtable: impl Into<VTableRef<'a, V>>,
     ) -> CopyValueRef<'a, V> {
@@ -1027,7 +1100,7 @@ pub struct CopyValueMut<'a, V = ()>
 where
     V: ?Sized,
 {
-    pub(crate) bytes: &'a mut [u8],
+    pub(crate) bytes: &'a mut [MaybeUninit<u8>],
     pub(crate) type_id: TypeId,
     pub(crate) vtable: VTableRef<'a, V>,
 }
@@ -1057,7 +1130,7 @@ impl<'a, V: ?Sized> CopyValueMut<'a, V> {
     /// The given bytes must be the correct representation of the type given `TypeId`.
     #[inline]
     pub(crate) unsafe fn from_raw_parts(
-        bytes: &'a mut [u8],
+        bytes: &'a mut [MaybeUninit<u8>],
         type_id: TypeId,
         vtable: impl Into<VTableRef<'a, V>>,
     ) -> CopyValueMut<'a, V> {
@@ -1140,7 +1213,7 @@ impl<'a, V: HasDrop> From<CopyValueMut<'a, V>> for CopyValueRef<'a, V> {
 /// Implementation for dropping a copy.
 ///
 /// This enables the following two conversions.
-unsafe fn drop_copy(_: &mut [u8]) {}
+unsafe fn drop_copy(_: &mut [MaybeUninit<u8>]) {}
 
 impl<'a, V: Any + Clone> From<CopyValueMut<'a, V>> for ValueMut<'a, (DropFn, V)> {
     #[inline]

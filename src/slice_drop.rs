@@ -1,5 +1,6 @@
 use std::{
     any::{Any, TypeId},
+    mem::MaybeUninit,
     slice,
 };
 
@@ -74,7 +75,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub fn into_raw_parts(self) -> (&'a [u8], usize, TypeId, VTableRef<'a, V>) {
+    pub fn into_raw_parts(self) -> (&'a [MaybeUninit<u8>], usize, TypeId, VTableRef<'a, V>) {
         let SliceCopy {
             data,
             element_size,
@@ -95,7 +96,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
     /// `into_dyn` macro until `CoerceUsize` is stabilized.
     #[inline]
     pub unsafe fn from_raw_parts(
-        data: &'a [u8],
+        data: &'a [MaybeUninit<u8>],
         element_size: usize,
         element_type_id: TypeId,
         vtable: impl Into<VTableRef<'a, V>>,
@@ -260,7 +261,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
     #[inline]
     pub fn subslice<I>(&self, i: I) -> SliceDrop<V>
     where
-        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+        I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
         SliceDrop {
             data: self.data.subslice(i),
@@ -271,7 +272,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
     #[inline]
     pub fn into_subslice<I>(self, i: I) -> SliceDrop<'a, V>
     where
-        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+        I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
         SliceDrop {
             data: self.data.into_subslice(i),
@@ -284,7 +285,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
 
     /// Get a `const` reference to the byte slice of the `i`'th element of the buffer.
     #[inline]
-    pub(crate) fn index_byte_slice(&self, i: usize) -> &[u8] {
+    pub(crate) fn index_byte_slice(&self, i: usize) -> &[MaybeUninit<u8>] {
         self.data.index_byte_slice(i)
     }
 }
@@ -358,7 +359,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub fn into_raw_parts(self) -> (&'a [u8], usize, TypeId, VTableRef<'a, V>) {
+    pub fn into_raw_parts(self) -> (&'a [MaybeUninit<u8>], usize, TypeId, VTableRef<'a, V>) {
         let SliceCopyMut {
             data,
             element_size,
@@ -379,7 +380,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     /// `into_dyn` macro until `CoerceUsize` is stabilized.
     #[inline]
     pub unsafe fn from_raw_parts(
-        data: &'a mut [u8],
+        data: &'a mut [MaybeUninit<u8>],
         element_size: usize,
         element_type_id: TypeId,
         vtable: impl Into<VTableRef<'a, V>>,
@@ -619,7 +620,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     #[inline]
     pub fn subslice<I>(&self, i: I) -> SliceDrop<V>
     where
-        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+        I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
         SliceDrop {
             data: self.data.subslice(i),
@@ -630,7 +631,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     #[inline]
     pub fn subslice_mut<I>(&mut self, i: I) -> SliceDropMut<V>
     where
-        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+        I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
         SliceDropMut {
             data: self.data.subslice_mut(i),
@@ -641,7 +642,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     #[inline]
     pub fn into_subslice<I>(self, i: I) -> SliceDropMut<'a, V>
     where
-        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+        I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
         SliceDropMut {
             data: self.data.into_subslice(i),

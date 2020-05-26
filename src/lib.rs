@@ -159,7 +159,7 @@ macro_rules! into_dyn {
 /// contiguous byte slices.
 pub(crate) trait ElementBytes {
     /// Get the slice of bytes representing all the elements.
-    fn bytes(&self) -> &[u8];
+    fn bytes(&self) -> &[std::mem::MaybeUninit<u8>];
 
     /// The size of an element in bytes.
     fn element_size(&self) -> usize;
@@ -172,7 +172,7 @@ pub(crate) trait ElementBytes {
 
     /// Index into an immutable slice of bytes.
     #[inline]
-    fn index_byte_slice(&self, i: usize) -> &[u8] {
+    fn index_byte_slice(&self, i: usize) -> &[std::mem::MaybeUninit<u8>] {
         &self.bytes()[self.index_byte_range(i)]
     }
 }
@@ -181,11 +181,11 @@ pub(crate) trait ElementBytes {
 /// contiguous byte slices.
 pub(crate) trait ElementBytesMut: ElementBytes {
     /// Get the mutable slice of bytes representing all the elements.
-    fn bytes_mut(&mut self) -> &mut [u8];
+    fn bytes_mut(&mut self) -> &mut [std::mem::MaybeUninit<u8>];
 
     /// Index into a mutable slice of bytes.
     #[inline]
-    fn index_byte_slice_mut(&mut self, i: usize) -> &mut [u8] {
+    fn index_byte_slice_mut(&mut self, i: usize) -> &mut [std::mem::MaybeUninit<u8>] {
         let rng = self.index_byte_range(i);
         &mut self.bytes_mut()[rng]
     }

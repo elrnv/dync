@@ -1,6 +1,6 @@
 use std::{
     any::{Any, TypeId},
-    mem::size_of,
+    mem::{size_of, MaybeUninit},
     slice,
 };
 
@@ -24,7 +24,7 @@ where
     V: ?Sized,
 {
     /// Raw data stored as bytes.
-    pub(crate) data: &'a [u8],
+    pub(crate) data: &'a [MaybeUninit<u8>],
     /// Number of bytes occupied by an element of this buffer.
     ///
     /// Note: We store this instead of length because it gives us the ability to get the type size
@@ -56,7 +56,7 @@ impl<'a, V> SliceCopy<'a, V> {
         let element_size = size_of::<T>();
         SliceCopy {
             data: std::slice::from_raw_parts(
-                slice.as_ptr() as *const u8,
+                slice.as_ptr() as *const MaybeUninit<u8>,
                 slice.len() * element_size,
             ),
             element_size,
@@ -99,7 +99,7 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
     /// Calling this function is not inherently unsafe, but using the returned values incorrectly
     /// may cause undefined behaviour.
     #[inline]
-    pub fn into_raw_parts(self) -> (&'a [u8], usize, TypeId, VTableRef<'a, V>) {
+    pub fn into_raw_parts(self) -> (&'a [MaybeUninit<u8>], usize, TypeId, VTableRef<'a, V>) {
         let SliceCopy {
             data,
             element_size,
@@ -120,7 +120,7 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
     /// `into_dyn` macro until `CoerceUsize` is stabilized.
     #[inline]
     pub unsafe fn from_raw_parts(
-        data: &'a [u8],
+        data: &'a [MaybeUninit<u8>],
         element_size: usize,
         element_type_id: TypeId,
         vtable: impl Into<VTableRef<'a, V>>,
@@ -343,7 +343,7 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
     #[inline]
     pub fn subslice<I>(&self, i: I) -> SliceCopy<V>
     where
-        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+        I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
         SliceCopy {
             data: &self.data[i.scale_range(self.element_size())],
@@ -357,7 +357,7 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
     #[inline]
     pub fn into_subslice<I>(self, i: I) -> SliceCopy<'a, V>
     where
-        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+        I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
         let element_size = self.element_size();
         SliceCopy {
@@ -374,7 +374,7 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
 
     /// Iterate over element sized chunks of bytes.
     #[inline]
-    pub(crate) fn byte_chunks(&self) -> impl Iterator<Item = &[u8]> {
+    pub(crate) fn byte_chunks(&self) -> impl Iterator<Item = &[MaybeUninit<u8>]> {
         self.bytes().chunks_exact(self.element_size())
     }
 }
@@ -385,7 +385,7 @@ impl<'a, V: ?Sized> ElementBytes for SliceCopy<'a, V> {
         self.element_size
     }
     #[inline]
-    fn bytes(&self) -> &[u8] {
+    fn bytes(&self) -> &[MaybeUninit<u8>] {
         &self.data
     }
 }
@@ -411,7 +411,7 @@ where
     V: ?Sized,
 {
     /// Raw data stored as bytes.
-    pub(crate) data: &'a mut [u8],
+    pub(crate) data: &'a mut [MaybeUninit<u8>],
     /// Number of bytes occupied by an element of this buffer.
     ///
     /// Note: We store this instead of length because it gives us the ability to get the type size
@@ -442,7 +442,7 @@ impl<'a, V> SliceCopyMut<'a, V> {
         let element_size = size_of::<T>();
         SliceCopyMut {
             data: std::slice::from_raw_parts_mut(
-                slice.as_mut_ptr() as *mut u8,
+                slice.as_mut_ptr() as *mut MaybeUninit<u8>,
                 slice.len() * element_size,
             ),
             element_size,
@@ -458,7 +458,7 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub fn into_raw_parts(self) -> (&'a mut [u8], usize, TypeId, VTableRef<'a, V>) {
+    pub fn into_raw_parts(self) -> (&'a mut [MaybeUninit<u8>], usize, TypeId, VTableRef<'a, V>) {
         let SliceCopyMut {
             data,
             element_size,
@@ -479,7 +479,7 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
     /// `into_dyn` macro until `CoerceUsize` is stabilized.
     #[inline]
     pub unsafe fn from_raw_parts(
-        data: &'a mut [u8],
+        data: &'a mut [MaybeUninit<u8>],
         element_size: usize,
         element_type_id: TypeId,
         vtable: impl Into<VTableRef<'a, V>>,
@@ -791,7 +791,7 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
     #[inline]
     pub fn subslice<I>(&self, i: I) -> SliceCopy<V>
     where
-        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+        I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
         SliceCopy {
             data: &self.data[i.scale_range(self.element_size())],
@@ -805,7 +805,7 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
     #[inline]
     pub fn subslice_mut<I>(&mut self, i: I) -> SliceCopyMut<V>
     where
-        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+        I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
         let element_size = self.element_size();
         SliceCopyMut {
@@ -820,7 +820,7 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
     #[inline]
     pub fn into_subslice<I>(self, i: I) -> SliceCopyMut<'a, V>
     where
-        I: std::slice::SliceIndex<[u8], Output = [u8]> + ScaleRange,
+        I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
         let element_size = self.element_size();
         SliceCopyMut {
@@ -860,14 +860,14 @@ impl<'a, V: ?Sized> ElementBytes for SliceCopyMut<'a, V> {
         self.element_size
     }
     #[inline]
-    fn bytes(&self) -> &[u8] {
+    fn bytes(&self) -> &[MaybeUninit<u8>] {
         &self.data
     }
 }
 
 impl<'a, V: ?Sized> ElementBytesMut for SliceCopyMut<'a, V> {
     #[inline]
-    fn bytes_mut(&mut self) -> &mut [u8] {
+    fn bytes_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         &mut self.data
     }
 }

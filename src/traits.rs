@@ -9,46 +9,46 @@ use crate::value::VTable;
 use dync_derive::dync_trait_method;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::mem::ManuallyDrop;
+use std::mem::{ManuallyDrop, MaybeUninit};
 
 pub trait DropBytes {
     #[doc(hidden)]
-    unsafe fn drop_bytes(bytes: &mut [u8]);
+    unsafe fn drop_bytes(bytes: &mut [MaybeUninit<u8>]);
 }
 
 pub trait CloneBytes: Clone {
     #[dync_trait_method]
     fn clone(&self) -> Self;
-    //unsafe fn clone_bytes(src: &[u8]) -> Box<[u8]>;
+    //unsafe fn clone_bytes(src: &[MaybeUninit<u8>]) -> Box<[MaybeUninit<u8>]>;
     #[dync_trait_method]
     fn clone_from(&mut self, src: &Self);
-    //unsafe fn clone_from_bytes(dst: &mut [u8], src: &[u8]);
+    //unsafe fn clone_from_bytes(dst: &mut [MaybeUninit<u8>], src: &[MaybeUninit<u8>]);
 
     #[doc(hidden)]
-    unsafe fn clone_into_raw_bytes(src: &[u8], dst: &mut [u8]);
+    unsafe fn clone_into_raw_bytes(src: &[MaybeUninit<u8>], dst: &mut [MaybeUninit<u8>]);
 }
 
 pub trait PartialEqBytes: PartialEq {
     #[dync_trait_method]
     fn eq(&self, other: &Self) -> bool;
-    //unsafe fn eq_bytes(a: &[u8], b: &[u8]) -> bool;
+    //unsafe fn eq_bytes(a: &[MaybeUninit<u8>], b: &[MaybeUninit<u8>]) -> bool;
 }
 
 pub trait HashBytes: Hash {
     #[dync_trait_method]
     fn hash<H: Hasher>(&self, state: &mut H);
-    //unsafe fn hash_bytes(bytes: &[u8], state: &mut dyn Hasher);
+    //unsafe fn hash_bytes(bytes: &[MaybeUninit<u8>], state: &mut dyn Hasher);
 }
 
 pub trait DebugBytes: fmt::Debug {
     #[dync_trait_method]
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error>;
-    //unsafe fn fmt_bytes(bytes: &[u8], f: &mut fmt::Formatter) -> Result<(), fmt::Error>;
+    //unsafe fn fmt_bytes(bytes: &[MaybeUninit<u8>], f: &mut fmt::Formatter) -> Result<(), fmt::Error>;
 }
 
 impl<T: 'static> DropBytes for T {
     #[inline]
-    unsafe fn drop_bytes(bytes: &mut [u8]) {
+    unsafe fn drop_bytes(bytes: &mut [MaybeUninit<u8>]) {
         let md: &mut ManuallyDrop<T> = Bytes::from_bytes_mut(bytes);
         ManuallyDrop::drop(md);
     }
@@ -56,18 +56,18 @@ impl<T: 'static> DropBytes for T {
 
 impl<T: Clone + 'static> CloneBytes for T {
     #[inline]
-    unsafe fn clone_bytes(src: &[u8]) -> Box<[u8]> {
+    unsafe fn clone_bytes(src: &[MaybeUninit<u8>]) -> Box<[MaybeUninit<u8>]> {
         let typed_src: &T = Bytes::from_bytes(src);
         Bytes::box_into_box_bytes(Box::new(typed_src.clone()))
     }
     #[inline]
-    unsafe fn clone_from_bytes(dst: &mut [u8], src: &[u8]) {
+    unsafe fn clone_from_bytes(dst: &mut [MaybeUninit<u8>], src: &[MaybeUninit<u8>]) {
         let typed_src: &T = Bytes::from_bytes(src);
         let typed_dst: &mut T = Bytes::from_bytes_mut(dst);
         typed_dst.clone_from(typed_src);
     }
     #[inline]
-    unsafe fn clone_into_raw_bytes(src: &[u8], dst: &mut [u8]) {
+    unsafe fn clone_into_raw_bytes(src: &[MaybeUninit<u8>], dst: &mut [MaybeUninit<u8>]) {
         let typed_src: &T = Bytes::from_bytes(src);
         let cloned = T::clone(typed_src);
         let cloned_bytes = Bytes::as_bytes(&cloned);
@@ -78,7 +78,7 @@ impl<T: Clone + 'static> CloneBytes for T {
 
 impl<T: PartialEq + 'static> PartialEqBytes for T {
     #[inline]
-    unsafe fn eq_bytes(a: &[u8], b: &[u8]) -> bool {
+    unsafe fn eq_bytes(a: &[MaybeUninit<u8>], b: &[MaybeUninit<u8>]) -> bool {
         let (a, b): (&T, &T) = (Bytes::from_bytes(a), Bytes::from_bytes(b));
         a.eq(b)
     }
@@ -86,7 +86,7 @@ impl<T: PartialEq + 'static> PartialEqBytes for T {
 
 impl<T: Hash + 'static> HashBytes for T {
     #[inline]
-    unsafe fn hash_bytes(bytes: &[u8], mut state: &mut dyn Hasher) {
+    unsafe fn hash_bytes(bytes: &[MaybeUninit<u8>], mut state: &mut dyn Hasher) {
         let typed_data: &T = Bytes::from_bytes(bytes);
         typed_data.hash(&mut state)
     }
@@ -94,19 +94,22 @@ impl<T: Hash + 'static> HashBytes for T {
 
 impl<T: fmt::Debug + 'static> DebugBytes for T {
     #[inline]
-    unsafe fn fmt_bytes(bytes: &[u8], f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    unsafe fn fmt_bytes(
+        bytes: &[MaybeUninit<u8>],
+        f: &mut fmt::Formatter,
+    ) -> Result<(), fmt::Error> {
         let typed_data: &T = Bytes::from_bytes(bytes);
         typed_data.fmt(f)
     }
 }
 
-pub type CloneFn = unsafe fn(&[u8]) -> Box<[u8]>;
-pub type CloneFromFn = unsafe fn(&mut [u8], &[u8]);
-pub type CloneIntoRawFn = unsafe fn(&[u8], &mut [u8]);
-pub type EqFn = unsafe fn(&[u8], &[u8]) -> bool;
-pub type HashFn = unsafe fn(&[u8], &mut dyn Hasher);
-pub type FmtFn = unsafe fn(&[u8], &mut fmt::Formatter) -> Result<(), fmt::Error>;
-pub type DropFn = unsafe fn(&mut [u8]);
+pub type CloneFn = unsafe fn(&[MaybeUninit<u8>]) -> Box<[MaybeUninit<u8>]>;
+pub type CloneFromFn = unsafe fn(&mut [MaybeUninit<u8>], &[MaybeUninit<u8>]);
+pub type CloneIntoRawFn = unsafe fn(&[MaybeUninit<u8>], &mut [MaybeUninit<u8>]);
+pub type EqFn = unsafe fn(&[MaybeUninit<u8>], &[MaybeUninit<u8>]) -> bool;
+pub type HashFn = unsafe fn(&[MaybeUninit<u8>], &mut dyn Hasher);
+pub type FmtFn = unsafe fn(&[MaybeUninit<u8>], &mut fmt::Formatter) -> Result<(), fmt::Error>;
+pub type DropFn = unsafe fn(&mut [MaybeUninit<u8>]);
 
 use downcast_rs::{impl_downcast, Downcast};
 

@@ -914,9 +914,13 @@ fn dync_fn_sig(sig: Signature) -> Signature {
                     ..
                 }) => {
                     let ty: Type = if let Some((_, lifetime)) = reference {
-                        syn::parse(quote! { & #lifetime #mutability [u8] }.into()).unwrap()
+                        syn::parse(
+                            quote! { & #lifetime #mutability [std::mem::MaybeUninit<u8>] }.into(),
+                        )
+                        .unwrap()
                     } else {
-                        syn::parse(quote! { #mutability Box<[u8]> }.into()).unwrap()
+                        syn::parse(quote! { #mutability Box<[std::mem::MaybeUninit<u8>]> }.into())
+                            .unwrap()
                     };
                     PatType {
                         attrs: attrs.to_vec(),
@@ -1080,9 +1084,10 @@ fn type_to_bytes(ty: Type) -> Type {
             elem: Box::new(type_to_bytes(*paren.elem)),
             ..paren
         }),
-        Type::Path(path) => {
-            self_type_path_into(path, syn::parse(quote! { Box<[u8]> }.into()).unwrap())
-        }
+        Type::Path(path) => self_type_path_into(
+            path,
+            syn::parse(quote! { Box<[std::mem::MaybeUninit<u8>]> }.into()).unwrap(),
+        ),
         Type::Ptr(ptr) => Type::Ptr(TypePtr {
             elem: Box::new(self_to_byte_slice(*ptr.elem)),
             ..ptr
@@ -1129,7 +1134,10 @@ fn self_type_path_into(path: TypePath, into_ty: Type) -> Type {
 // Convert reference or pointer to self into a reference to bytes or pass through
 fn self_to_byte_slice(ty: Type) -> Type {
     match ty {
-        Type::Path(path) => self_type_path_into(path, syn::parse(quote! { [u8] }.into()).unwrap()),
+        Type::Path(path) => self_type_path_into(
+            path,
+            syn::parse(quote! { [std::mem::MaybeUninit<u8>] }.into()).unwrap(),
+        ),
         other => other,
     }
 }

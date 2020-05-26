@@ -2,7 +2,7 @@
 use std::{
     any::{Any, TypeId},
     fmt,
-    mem::ManuallyDrop,
+    mem::{ManuallyDrop, MaybeUninit},
     slice,
 };
 
@@ -33,23 +33,29 @@ where
 impl<V: ?Sized + HasDrop> Drop for VecDrop<V> {
     fn drop(&mut self) {
         unsafe {
-            let VecCopy {
-                data,
-                vtable,
-                element_size,
-                ..
-            } = &mut *self.data;
-            let chunks_iter = data.chunks_exact_mut(*element_size);
-            for elem_bytes in chunks_iter {
-                vtable.drop_fn()(elem_bytes);
+            {
+                // Drop the contents using the associated drop function
+                let VecCopy {
+                    data,
+                    vtable,
+                    element_size,
+                    ..
+                } = &mut *self.data;
+                let chunks_iter = data.chunks_exact_mut(*element_size);
+                for elem_bytes in chunks_iter {
+                    vtable.drop_fn()(elem_bytes);
+                }
             }
+
+            // Drop the vec itself
+            ManuallyDrop::drop(&mut self.data);
         }
     }
 }
 
 impl<V: ?Sized + Clone + HasDrop + HasClone> Clone for VecDrop<V> {
     fn clone(&self) -> Self {
-        let data_clone = |bytes: &[u8]| {
+        let data_clone = |bytes: &[MaybeUninit<u8>]| {
             let mut new_data = bytes.to_vec();
             self.data
                 .byte_chunks()
@@ -154,7 +160,7 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
     /// `into_dyn` macro until `CoerceUsize` is stabilized.
     #[inline]
     pub unsafe fn from_raw_parts(
-        data: Vec<u8>,
+        data: Vec<MaybeUninit<u8>>,
         element_size: usize,
         element_type_id: TypeId,
         vtable: Ptr<V>,
@@ -174,7 +180,7 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub fn into_raw_parts(self) -> (Vec<u8>, usize, TypeId, Ptr<V>) {
+    pub fn into_raw_parts(self) -> (Vec<MaybeUninit<u8>>, usize, TypeId, Ptr<V>) {
         unsafe {
             // Inhibit dropping self.
             let mut md = ManuallyDrop::new(self);
@@ -413,9 +419,9 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
     pub fn push<U: ?Sized + HasDrop>(&mut self, value: BoxValue<U>) -> Option<&mut Self> {
         if self.element_type_id() == value.value_type_id() {
             // Prevent the value from being dropped at the end of this scope since it will be later
-            // dropped by this container.
-            let value = ManuallyDrop::new(value);
-            self.data.data.extend_from_slice(&value.bytes);
+            // dropped by this container. The remaining fields like vtable will be dropped here.
+            let (bytes, _, _) = value.into_raw_parts();
+            self.data.data.extend_from_slice(&*bytes);
             Some(self)
         } else {
             None
@@ -437,7 +443,9 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
     {
         if self.element_type_id() == value.value_type_id() {
             let orig_len = self.data.data.len();
-            self.data.data.resize(orig_len + value.bytes.len(), 0u8);
+            self.data
+                .data
+                .resize(orig_len + value.bytes.len(), MaybeUninit::<u8>::uninit());
             // This does not leak because the copied bytes are guaranteed to be dropped by self.
             // This will also not cause a double free since the bytes in self are not dropped by
             // clone_into_raw_fn unlike clone_from_fn.
@@ -681,7 +689,9 @@ impl<V: ?Sized + HasDrop + HasClone> VecDrop<V> {
             }
 
             // Truncate data
-            self.data.data.resize(new_len * size_t, 0);
+            self.data
+                .data
+                .resize(new_len * size_t, MaybeUninit::<u8>::uninit());
         }
         Some(self)
     }

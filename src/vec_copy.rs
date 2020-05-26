@@ -14,7 +14,7 @@
 
 use std::{
     any::{Any, TypeId},
-    mem::size_of,
+    mem::{size_of, MaybeUninit},
     slice,
 };
 
@@ -37,7 +37,7 @@ use crate::{ElementBytes, ElementBytesMut};
 pub trait CopyElem: Any + Copy {}
 impl<T> CopyElem for T where T: Any + Copy {}
 
-/// Buffer of plain old data. The data is stored as an array of bytes (`Vec<u8>`).
+/// Buffer of plain old data. The data is stored as an array of bytes (`Vec<MaybeUninit<u8>>`).
 ///
 /// `VecCopy` keeps track of the type stored within via an explicit `TypeId` member. This allows
 /// one to hide the type from the compiler and check it only when necessary. It is particularly
@@ -56,13 +56,13 @@ impl<T> CopyElem for T where T: Any + Copy {}
 ///
 /// [`bytemuck`]: https://crates.io/crates/bytemuck
 /// [`zerocopy`]: https://crates.io/crates/zerocopy
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug)]
 pub struct VecCopy<V = ()>
 where
     V: ?Sized,
 {
     /// Raw data stored as bytes.
-    pub(crate) data: Vec<u8>,
+    pub(crate) data: Vec<MaybeUninit<u8>>,
     /// Number of bytes occupied by an element of this buffer.
     ///
     /// Note: We store this instead of length because it gives us the ability to get the type size
@@ -178,7 +178,7 @@ impl<V> VecCopy<V> {
             let mut md = std::mem::ManuallyDrop::new(vec);
             let len_in_bytes = md.len() * element_size;
             let capacity_in_bytes = md.capacity() * element_size;
-            let vec_ptr = md.as_mut_ptr() as *mut u8;
+            let vec_ptr = md.as_mut_ptr() as *mut MaybeUninit<u8>;
 
             Vec::from_raw_parts(vec_ptr, len_in_bytes, capacity_in_bytes)
         };
@@ -238,7 +238,7 @@ impl<V: ?Sized> VecCopy<V> {
     /// `into_dyn` macro until `CoerceUsize` is stabilized.
     #[inline]
     pub unsafe fn from_raw_parts(
-        data: Vec<u8>,
+        data: Vec<MaybeUninit<u8>>,
         element_size: usize,
         element_type_id: TypeId,
         vtable: Ptr<V>,
@@ -256,7 +256,7 @@ impl<V: ?Sized> VecCopy<V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub fn into_raw_parts(self) -> (Vec<u8>, usize, TypeId, Ptr<V>) {
+    pub fn into_raw_parts(self) -> (Vec<MaybeUninit<u8>>, usize, TypeId, Ptr<V>) {
         let VecCopy {
             data,
             element_size,
@@ -310,7 +310,8 @@ impl<V: ?Sized> VecCopy<V> {
             }
         } else {
             // Truncate
-            self.data.resize(new_len * size_t, 0);
+            self.data
+                .resize(new_len * size_t, MaybeUninit::<u8>::uninit());
         }
         Some(self)
     }
@@ -324,8 +325,9 @@ impl<V: ?Sized> VecCopy<V> {
         let element_size = size_of::<T>();
         assert_ne!(element_size, 0, "VecCopy doesn't support zero sized types.");
         let bins = slice.len() * element_size;
-        let byte_slice = unsafe { slice::from_raw_parts(slice.as_ptr() as *const u8, bins) };
-        self.data.resize(bins, 0);
+        let byte_slice =
+            unsafe { slice::from_raw_parts(slice.as_ptr() as *const MaybeUninit<u8>, bins) };
+        self.data.resize(bins, MaybeUninit::<u8>::uninit());
         self.data.copy_from_slice(byte_slice);
         self.element_size = element_size;
         self.element_type_id = TypeId::of::<T>();
@@ -785,7 +787,10 @@ impl<'a, V: ?Sized + 'a> Extend<CopyValueRef<'a, V>> for VecCopy<V> {
 
 impl<V: ?Sized + Clone> VecCopy<V> {
     /// Clones this `VecCopy` using the given function.
-    pub(crate) fn clone_with(&self, clone: impl FnOnce(&[u8]) -> Vec<u8>) -> Self {
+    pub(crate) fn clone_with(
+        &self,
+        clone: impl FnOnce(&[MaybeUninit<u8>]) -> Vec<MaybeUninit<u8>>,
+    ) -> Self {
         VecCopy {
             data: clone(&self.data),
             element_size: self.element_size,
@@ -852,7 +857,7 @@ impl<V: ?Sized> VecCopy<V> {
 
     /// Get a `const` reference to the byte slice of the `i`'th element of the buffer.
     #[inline]
-    pub fn get_bytes(&self, i: usize) -> &[u8] {
+    pub fn get_bytes(&self, i: usize) -> &[MaybeUninit<u8>] {
         debug_assert!(i < self.len());
         let element_size = self.element_size();
         &self.data[i * element_size..(i + 1) * element_size]
@@ -865,7 +870,7 @@ impl<V: ?Sized> VecCopy<V> {
     /// This function is marked as unsafe since the returned bytes may be modified
     /// arbitrarily, which may potentially produce malformed values.
     #[inline]
-    pub unsafe fn get_bytes_mut(&mut self, i: usize) -> &mut [u8] {
+    pub unsafe fn get_bytes_mut(&mut self, i: usize) -> &mut [MaybeUninit<u8>] {
         debug_assert!(i < self.len());
         self.index_byte_slice_mut(i)
     }
@@ -885,7 +890,8 @@ impl<V: ?Sized> VecCopy<V> {
     ///
     /// # Safety
     ///
-    /// The underlying data must be correctly represented by a `&[T]` when borrowed as`&[u8]`.
+    /// The underlying data must be correctly represented by a `&[T]` when borrowed as
+    /// `&[MaybeUninit<u8>]`.
     #[inline]
     pub unsafe fn reinterpret_as_slice<T>(&self) -> &[T] {
         reinterpret::reinterpret_slice(self.data.as_slice())
@@ -896,7 +902,7 @@ impl<V: ?Sized> VecCopy<V> {
     /// # Safety
     ///
     /// The underlying data must be correctly represented by a `&mut [T]` when borrowed as`&mut
-    /// [u8]`.
+    /// [MaybeUninit<u8>]`.
     #[inline]
     pub unsafe fn reinterpret_as_mut_slice<T>(&mut self) -> &mut [T] {
         reinterpret::reinterpret_mut_slice(self.data.as_mut_slice())
@@ -906,7 +912,8 @@ impl<V: ?Sized> VecCopy<V> {
     ///
     /// # Safety
     ///
-    /// Each underlying element must be correctly represented by a `&T` when borrowed as `&[u8]`.
+    /// Each underlying element must be correctly represented by a `&T` when borrowed as
+    /// `&[MaybeUninit<u8>]`.
     #[inline]
     pub unsafe fn reinterpret_iter<T>(&self) -> slice::Iter<T> {
         self.reinterpret_as_slice().iter()
@@ -917,7 +924,7 @@ impl<V: ?Sized> VecCopy<V> {
     /// # Safety
     ///
     /// Each underlying element must be correctly represented by a `&mut T` when borrowed as `&mut
-    /// [u8]`.
+    /// [MaybeUninit<u8>]`.
     #[inline]
     pub unsafe fn reinterpret_iter_mut<T>(&mut self) -> slice::IterMut<T> {
         self.reinterpret_as_mut_slice().iter_mut()
@@ -925,7 +932,7 @@ impl<V: ?Sized> VecCopy<V> {
 
     /// Peek at the internal representation of the data.
     #[inline]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &[MaybeUninit<u8>] {
         self.data.as_slice()
     }
 
@@ -936,7 +943,7 @@ impl<V: ?Sized> VecCopy<V> {
     /// This function is marked as unsafe since the returned bytes may be modified
     /// arbitrarily, which may potentially produce malformed values.
     #[inline]
-    pub unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
+    pub unsafe fn as_bytes_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self.data.as_mut_slice()
     }
 
@@ -945,7 +952,7 @@ impl<V: ?Sized> VecCopy<V> {
     /// This avoids needing to know what type data you're dealing with. This type of iterator is
     /// useful for transferring data from one place to another for a generic buffer.
     #[inline]
-    pub fn byte_chunks<'a>(&'a self) -> impl Iterator<Item = &'a [u8]> + 'a {
+    pub fn byte_chunks<'a>(&'a self) -> impl Iterator<Item = &'a [MaybeUninit<u8>]> + 'a {
         let chunk_size = self.element_size();
         self.data.chunks_exact(chunk_size)
     }
@@ -960,7 +967,9 @@ impl<V: ?Sized> VecCopy<V> {
     /// This function is marked as unsafe since the returned bytes may be modified
     /// arbitrarily, which may potentially produce malformed values.
     #[inline]
-    pub unsafe fn byte_chunks_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut [u8]> + 'a {
+    pub unsafe fn byte_chunks_mut<'a>(
+        &'a mut self,
+    ) -> impl Iterator<Item = &'a mut [MaybeUninit<u8>]> + 'a {
         let chunk_size = self.element_size();
         self.data.chunks_exact_mut(chunk_size)
     }
@@ -977,7 +986,7 @@ impl<V: ?Sized> VecCopy<V> {
     /// It is assumed that that the given `bytes` slice is a valid representation of the element
     /// types stored in this buffer. Otherwise this function will cause undefined behavior.
     #[inline]
-    pub unsafe fn push_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
+    pub unsafe fn push_bytes(&mut self, bytes: &[MaybeUninit<u8>]) -> Option<&mut Self> {
         if bytes.len() == self.element_size() {
             self.data.extend_from_slice(bytes);
             Some(self)
@@ -999,7 +1008,7 @@ impl<V: ?Sized> VecCopy<V> {
     /// collection of elements with the same type as stored in this buffer. Otherwise this function
     /// will cause undefined behavior.
     #[inline]
-    pub unsafe fn extend_bytes(&mut self, bytes: &[u8]) -> Option<&mut Self> {
+    pub unsafe fn extend_bytes(&mut self, bytes: &[MaybeUninit<u8>]) -> Option<&mut Self> {
         let element_size = self.element_size();
         if bytes.len() % element_size == 0 {
             self.data.extend_from_slice(bytes);
@@ -1022,7 +1031,7 @@ impl<V: ?Sized> VecCopy<V> {
     /// collection of elements with the same type as stored in this buffer. Otherwise this function
     /// will cause undefined behavior.
     #[inline]
-    pub unsafe fn append_bytes(&mut self, bytes: &mut Vec<u8>) -> Option<&mut Self> {
+    pub unsafe fn append_bytes(&mut self, bytes: &mut Vec<MaybeUninit<u8>>) -> Option<&mut Self> {
         let element_size = self.element_size();
         if bytes.len() % element_size == 0 {
             self.data.append(bytes);
@@ -1062,13 +1071,13 @@ impl<V: ?Sized> ElementBytes for VecCopy<V> {
     fn element_size(&self) -> usize {
         self.element_size
     }
-    fn bytes(&self) -> &[u8] {
+    fn bytes(&self) -> &[MaybeUninit<u8>] {
         self.data.as_ref()
     }
 }
 
 impl<V: ?Sized> ElementBytesMut for VecCopy<V> {
-    fn bytes_mut(&mut self) -> &mut [u8] {
+    fn bytes_mut(&mut self) -> &mut [MaybeUninit<u8>] {
         self.data.as_mut()
     }
 }
@@ -1430,7 +1439,7 @@ mod tests {
 
         for (i, val) in buf.byte_chunks().enumerate() {
             assert_eq!(
-                unsafe { reinterpret::reinterpret_slice::<u8, f32>(val)[0] },
+                unsafe { reinterpret::reinterpret_slice::<_, f32>(val)[0] },
                 vec_f32[i]
             );
         }
@@ -1462,7 +1471,7 @@ mod tests {
         // Zero float is always represented by four zero bytes in IEEE format.
         vec_f32.push(0.0);
         vec_f32.push(0.0);
-        unsafe { buf.extend_bytes(&[0, 0, 0, 0, 0, 0, 0, 0]) }.unwrap();
+        unsafe { buf.extend_bytes(&[MaybeUninit::new(0u8); 8]) }.unwrap();
 
         for (i, &val) in buf.iter_as::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
@@ -1470,12 +1479,18 @@ mod tests {
 
         // Test byte getters
         for i in 5..7 {
-            assert_eq!(buf.get_bytes(i), &[0, 0, 0, 0]);
-            assert_eq!(unsafe { buf.get_bytes_mut(i) }, &[0, 0, 0, 0]);
+            assert_eq!(
+                unsafe { std::mem::transmute::<_, &[u8]>(buf.get_bytes(i)) },
+                &[0u8; 4][..]
+            );
+            assert_eq!(
+                unsafe { std::mem::transmute::<_, &mut [u8]>(buf.get_bytes_mut(i)) },
+                &[0u8; 4][..]
+            );
         }
 
         vec_f32.push(0.0);
-        unsafe { buf.push_bytes(&[0, 0, 0, 0]) }.unwrap();
+        unsafe { buf.push_bytes(&[MaybeUninit::new(0); 4][..]) }.unwrap();
 
         for (i, &val) in buf.iter_as::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
@@ -1506,7 +1521,8 @@ mod tests {
 
         // Append an ordianry vector of data.
         let vec_f32 = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
-        let mut vec_bytes: Vec<u8> = unsafe { reinterpret::reinterpret_vec(vec_f32.clone()) };
+        let mut vec_bytes: Vec<MaybeUninit<u8>> =
+            unsafe { reinterpret::reinterpret_vec(vec_f32.clone()) };
         unsafe { buf.append_bytes(&mut vec_bytes) };
 
         for (i, &val) in buf.iter_as::<f32>().unwrap().enumerate() {
@@ -1517,14 +1533,14 @@ mod tests {
         assert_eq!(buf.len(), 0);
 
         // Append a temporary vec.
-        unsafe { buf.append_bytes(&mut vec![0u8; 4]) };
+        unsafe { buf.append_bytes(&mut vec![MaybeUninit::new(0u8); 4]) };
         assert_eq!(buf.get_as::<f32>(0).unwrap(), 0.0f32);
 
         buf.clear();
         assert_eq!(buf.len(), 0);
 
         // Extend buffer with a slice
-        let slice_bytes: &[u8] = unsafe { reinterpret::reinterpret_slice(&vec_f32) };
+        let slice_bytes: &[MaybeUninit<u8>] = unsafe { reinterpret::reinterpret_slice(&vec_f32) };
         unsafe { buf.extend_bytes(slice_bytes) };
 
         for (i, &val) in buf.iter_as::<f32>().unwrap().enumerate() {
