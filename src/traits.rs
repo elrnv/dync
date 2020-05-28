@@ -151,9 +151,16 @@ pub struct DebugVTable(pub DropFn, pub FmtFn);
 pub struct SendVTable(pub DropFn);
 pub struct SyncVTable(pub DropFn);
 
+// VTable implementations are needed for builtin types to work with builtin vtables
 impl<T: DropBytes> VTable<T> for DropVTable {
     fn build_vtable() -> Self {
         DropVTable(T::drop_bytes)
+    }
+}
+
+impl<T: DropBytes + DebugBytes> VTable<T> for DebugVTable {
+    fn build_vtable() -> Self {
+        DebugVTable(T::drop_bytes, T::fmt_bytes)
     }
 }
 

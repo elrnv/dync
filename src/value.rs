@@ -626,6 +626,45 @@ impl<'a, V: ?Sized> AsRef<V> for VTableRef<'a, V> {
     }
 }
 
+macro_rules! impl_value_ref_traits {
+    ($value_ref:ident : $($maybe_drop:ident)*) => {
+        unsafe impl<'a, V: ?Sized + HasSend $( + $maybe_drop)*> Send for $value_ref<'a, V> {}
+        unsafe impl<'a, V: ?Sized + HasSync $( + $maybe_drop)*> Sync for $value_ref<'a, V> {}
+
+        impl<'a, V: ?Sized + HasHash $( + $maybe_drop)*> Hash for $value_ref<'a, V> {
+            #[inline]
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                unsafe {
+                    self.vtable.as_ref().hash_fn()(self.bytes.get_bytes_ref(), state);
+                }
+            }
+        }
+
+        impl<'a, V: ?Sized + HasDebug $( + $maybe_drop)*> fmt::Debug for $value_ref<'a, V> {
+            #[inline]
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                unsafe { self.vtable.as_ref().fmt_fn()(self.bytes.get_bytes_ref(), f) }
+            }
+        }
+
+        impl<'a, V: ?Sized + HasPartialEq $( + $maybe_drop)*> PartialEq for $value_ref<'a, V> {
+            #[inline]
+            fn eq(&self, other: &Self) -> bool {
+                assert_eq!(
+                    self.type_id, other.type_id,
+                    "Comparing values of different types is forbidden"
+                );
+                // This is safe because we have just checked that the two types are the same.
+                unsafe {
+                    self.vtable.as_ref().eq_fn()(self.bytes.get_bytes_ref(), other.bytes.get_bytes_ref())
+                }
+            }
+        }
+
+        impl<'a, V: ?Sized + HasEq $( + $maybe_drop)*> Eq for $value_ref<'a, V> {}
+    }
+}
+
 /// A generic value reference into a buffer.
 #[derive(Clone)]
 pub struct ValueRef<'a, V>
@@ -637,40 +676,7 @@ where
     pub(crate) vtable: VTableRef<'a, V>,
 }
 
-unsafe impl<'a, V: ?Sized + HasDrop + HasSend> Send for ValueRef<'a, V> {}
-unsafe impl<'a, V: ?Sized + HasDrop + HasSync> Sync for ValueRef<'a, V> {}
-
-impl<'a, V: ?Sized + HasHash + HasDrop> Hash for ValueRef<'a, V> {
-    #[inline]
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        unsafe {
-            self.vtable.as_ref().hash_fn()(self.bytes.get_bytes_ref(), state);
-        }
-    }
-}
-
-impl<'a, V: ?Sized + HasDebug + HasDrop> fmt::Debug for ValueRef<'a, V> {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        unsafe { self.vtable.as_ref().fmt_fn()(self.bytes.get_bytes_ref(), f) }
-    }
-}
-
-impl<'a, V: ?Sized + HasPartialEq + HasDrop> PartialEq for ValueRef<'a, V> {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        assert_eq!(
-            self.type_id, other.type_id,
-            "Comparing values of different types is forbidden"
-        );
-        // This is safe because we have just checked that the two types are the same.
-        unsafe {
-            self.vtable.as_ref().eq_fn()(self.bytes.get_bytes_ref(), other.bytes.get_bytes_ref())
-        }
-    }
-}
-
-impl<'a, V: ?Sized + HasEq + HasDrop> Eq for ValueRef<'a, V> {}
+impl_value_ref_traits!(ValueRef: HasDrop);
 
 impl<'a, V: HasDrop> ValueRef<'a, V> {
     /// Create a new `ValueRef` from a typed reference.
@@ -817,28 +823,7 @@ where
     pub(crate) vtable: VTableRef<'a, V>,
 }
 
-impl<'a, V: ?Sized + HasDebug + HasDrop> fmt::Debug for ValueMut<'a, V> {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        unsafe { self.vtable.as_ref().fmt_fn()(self.bytes, f) }
-    }
-}
-
-impl<'a, V: ?Sized + HasPartialEq + HasDrop> PartialEq for ValueMut<'a, V> {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        assert_eq!(
-            self.type_id, other.type_id,
-            "Comparing values of different types is forbidden"
-        );
-        // This is safe because we have just checked that the two types are the same.
-        unsafe {
-            self.vtable.as_ref().eq_fn()(self.bytes.get_bytes_ref(), other.bytes.get_bytes_ref())
-        }
-    }
-}
-
-impl<'a, V: ?Sized + HasEq + HasDrop> Eq for ValueMut<'a, V> {}
+impl_value_ref_traits!(ValueMut: HasDrop);
 
 impl<'a, V: HasDrop> ValueMut<'a, V> {
     /// Create a new `ValueRef` from a typed reference.
@@ -1011,7 +996,7 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
 }
 
 /// A generic value reference to a `Copy` type.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CopyValueRef<'a, V = ()>
 where
     V: ?Sized,
@@ -1020,6 +1005,8 @@ where
     pub(crate) type_id: TypeId,
     pub(crate) vtable: VTableRef<'a, V>,
 }
+
+impl_value_ref_traits!(CopyValueRef:);
 
 impl<'a, V> CopyValueRef<'a, V> {
     /// Create a new `CopyValueRef` from a typed reference.
@@ -1091,7 +1078,6 @@ impl<'a, V: ?Sized> CopyValueRef<'a, V> {
 }
 
 /// A generic mutable `Copy` value reference.
-#[derive(Debug)]
 pub struct CopyValueMut<'a, V = ()>
 where
     V: ?Sized,
@@ -1100,6 +1086,8 @@ where
     pub(crate) type_id: TypeId,
     pub(crate) vtable: VTableRef<'a, V>,
 }
+
+impl_value_ref_traits!(CopyValueMut:);
 
 impl<'a, V> CopyValueMut<'a, V> {
     /// Create a new `CopyValueMut` from a typed mutable reference.

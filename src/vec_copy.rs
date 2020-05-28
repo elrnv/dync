@@ -55,7 +55,7 @@ impl<T> CopyElem for T where T: Any + Copy {}
 ///
 /// [`bytemuck`]: https://crates.io/crates/bytemuck
 /// [`zerocopy`]: https://crates.io/crates/zerocopy
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct VecCopy<V = ()>
 where
     V: ?Sized,

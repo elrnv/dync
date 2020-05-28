@@ -1,15 +1,48 @@
-//! This crate defines a buffer data structure optimized to be written to and read from standard
-//! `Vec`s.
+//! # Overview
 //!
-//! [`VecCopy`] is particularly useful when dealing with plain data whose type is determined at
-//! run time.  Note that data is stored in the underlying byte buffers in native endian form, thus
-//! requesting typed data from a buffer on a platform with different endianness is unsafe.
+//! This crate aims to fill the gap in Rust's dynamic traits system by exposing the control over dynamic
+//! virtual function tables to the user in a safe API. Below is a list of capabilities unlocked by
+//! `dync`.
 //!
-//! # Caveats
+//! - Create homogeneous untyped `Vec`s that store a single virtual function table for all contained
+//!   elements:
+//!   ```
+//!   use dync::VecDrop;
+//!   // Create an untyped `Vec`.
+//!   let vec: VecDrop = vec![1_i32,2,3,4].into();
+//!   // Access elements either by downcasting to the underlying type.
+//!   for value_ref in vec.iter() {
+//!       let int = value_ref.downcast::<i32>().unwrap();
+//!       println!("{}", int);
+//!   }
+//!   // Or downcast the iterator directly for more efficient traversal.
+//!   for int in vec.iter_as::<i32>().unwrap() {
+//!       println!("{}", int);
+//!   }
+//!   ```
 //!
-//! [`VecCopy`] doesn't support zero-sized types.
+//!   The `VecDrop` type above defaults to the empty virtual table (with the exception of the drop
+//!   function), which is not terribly useful when the contained values need to be processed in
+//!   some way.  `dync` provides support for common standard library traits such as:
+//!   - `Drop`
+//!   - `Clone`
+//!   - `PartialEq`
+//!   - `std::hash::Hash`
+//!   - `std::fmt::Debug`
+//!   - `Send` and `Sync`
+//!   - more to come
 //!
-//! [`VecCopy`]: struct.VecCopy
+//!   So to produce a `VecDrop` of a printable type, we could instead do
+//!   ```
+//!   use dync::{VecDrop, traits::DebugVTable};
+//!   // Create an untyped `Vec` of `std::fmt::Debug` types.
+//!   let vec: VecDrop<DebugVTable> = vec![1_i32,2,3,4].into();
+//!   // We can now iterate and print value references (which inherit the VTable from the container)
+//!   // without needing a downcast.
+//!   for value_ref in vec.iter() {
+//!       println!("{:?}", value_ref);
+//!   }
+//!   ```
 
 pub mod macros;
 mod bytes;
