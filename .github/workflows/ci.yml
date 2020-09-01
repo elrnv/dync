@@ -28,6 +28,8 @@ jobs:
         run: cargo test --verbose
       - name: Test all features
         run: cargo test --all-features --verbose
+      - name: Test no default features
+        run: cargo test --no-default-features --verbose
       - name: Install Valgrind
         run: sudo apt install valgrind
       - name: Run Valgrind
