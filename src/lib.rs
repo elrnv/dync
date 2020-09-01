@@ -5,69 +5,63 @@
 //! `dync`.
 //!
 //! - Create homogeneous untyped `Vec`s that store a single virtual function table for all contained
-//!   elements:
-//!   ```
-//!   use dync::VecDrop;
-//!   // Create an untyped `Vec`.
-//!   let vec: VecDrop = vec![1_i32,2,3,4].into();
-//!   // Access elements either by downcasting to the underlying type.
-//!   for value_ref in vec.iter() {
-//!       let int = value_ref.downcast::<i32>().unwrap();
-//!       println!("{}", int);
-//!   }
-//!   // Or downcast the iterator directly for more efficient traversal.
-//!   for int in vec.iter_as::<i32>().unwrap() {
-//!       println!("{}", int);
-//!   }
-//!   ```
+//!   elements. This functionality is enabled by the `traits` feature. For more details see
+//!   [`vec_drop`].
 //!
-//!   The `VecDrop` type above defaults to the empty virtual table (with the exception of the drop
-//!   function), which is not terribly useful when the contained values need to be processed in
-//!   some way.  `dync` provides support for common standard library traits such as:
-//!   - `Drop`
-//!   - `Clone`
-//!   - `PartialEq`
-//!   - `std::hash::Hash`
-//!   - `std::fmt::Debug`
-//!   - `Send` and `Sync`
-//!   - more to come
-//!
-//!   So to produce a `VecDrop` of a printable type, we could instead do
-//!   ```
-//!   use dync::{VecDrop, traits::DebugVTable};
-//!   // Create an untyped `Vec` of `std::fmt::Debug` types.
-//!   let vec: VecDrop<DebugVTable> = vec![1_i32,2,3,4].into();
-//!   // We can now iterate and print value references (which inherit the VTable from the container)
-//!   // without needing a downcast.
-//!   for value_ref in vec.iter() {
-//!       println!("{:?}", value_ref);
-//!   }
-//!   ```
+//! [`vec_drop`]: vec_drop/index.html
 
-pub mod macros;
 mod bytes;
+pub mod macros;
+
+#[macro_use]
+mod copy_value;
+mod vtable;
+
+#[cfg(feature = "traits")]
+mod meta;
+
+#[cfg(feature = "traits")]
 pub mod traits;
+
+#[cfg(feature = "traits")]
 #[macro_use]
 mod value;
+
 pub mod index_slice;
+
 mod slice_copy;
-mod slice_drop;
 mod vec_copy;
+
+#[cfg(feature = "traits")]
+mod slice_drop;
+
+#[cfg(feature = "traits")]
 mod vec_drop;
 
+#[cfg(feature = "traits")]
+pub use crate::meta::*;
+pub use copy_value::*;
+#[cfg(feature = "traits")]
 pub use downcast_rs as downcast;
+#[cfg(feature = "traits")]
 pub use dync_derive::dync_mod;
+#[cfg(feature = "traits")]
 pub use dync_derive::dync_trait;
 pub use index_slice::*;
 pub use slice_copy::*;
+#[cfg(feature = "traits")]
 pub use slice_drop::*;
+#[cfg(feature = "traits")]
 pub use value::*;
 pub use vec_copy::*;
+#[cfg(feature = "traits")]
 pub use vec_drop::*;
+pub use vtable::*;
 
 /// Convert a given container with a dynamic vtable to a concrete type.
 ///
 /// This macro will panic if the conversion fails.
+#[cfg(feature = "traits")]
 #[macro_export]
 macro_rules! from_dyn {
     (SliceDrop < dyn $trait:path as $vtable:path >) => {{
@@ -128,6 +122,7 @@ macro_rules! from_dyn {
 }
 
 /// Convert a given container type (e.g. `VecCopy` or `SliceDyn`) to have a dynamic VTable.
+#[cfg(feature = "traits")]
 #[macro_export]
 macro_rules! into_dyn {
     (SliceDrop < dyn $trait:path >) => {{

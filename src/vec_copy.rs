@@ -29,8 +29,9 @@ use std::fmt;
 use num_traits::{cast, NumCast, Zero};
 
 use crate::bytes::Bytes;
+use crate::copy_value::*;
 use crate::slice_copy::*;
-use crate::value::*;
+use crate::vtable::*;
 use crate::{ElementBytes, ElementBytesMut};
 
 pub trait CopyElem: Any + Copy {}
@@ -202,6 +203,7 @@ impl<V> VecCopy<V> {
     }
 
     /// It is unsafe to call this for `T` that is not a `CopyElem`.
+    #[cfg(feature = "traits")]
     #[inline]
     pub(crate) unsafe fn from_slice_non_copy<T: Any + Clone>(slice: &[T]) -> Self
     where
@@ -215,8 +217,9 @@ impl<V> VecCopy<V> {
 
 impl<V: ?Sized> VecCopy<V> {
     /// Construct a `VecCopy` with the same type as the given buffer without copying its data.
+    #[cfg(feature = "traits")]
     #[inline]
-    pub fn with_type_from(other: impl Into<Meta<Ptr<V>>>) -> Self {
+    pub fn with_type_from(other: impl Into<crate::meta::Meta<Ptr<V>>>) -> Self {
         let other = other.into();
         VecCopy {
             data: Vec::new(),
@@ -786,6 +789,7 @@ impl<'a, V: ?Sized + 'a> Extend<CopyValueRef<'a, V>> for VecCopy<V> {
 
 impl<V: ?Sized + Clone> VecCopy<V> {
     /// Clones this `VecCopy` using the given function.
+    #[cfg(feature = "traits")]
     pub(crate) fn clone_with(
         &self,
         clone: impl FnOnce(&[MaybeUninit<u8>]) -> Vec<MaybeUninit<u8>>,
@@ -1041,31 +1045,6 @@ impl<V: ?Sized> VecCopy<V> {
     }
 }
 
-impl<'a, V> From<&'a VecCopy<V>> for Meta<VTableRef<'a, V>> {
-    #[inline]
-    fn from(vec: &'a VecCopy<V>) -> Meta<VTableRef<'a, V>> {
-        Meta {
-            element_size: vec.element_size,
-            element_type_id: vec.element_type_id,
-            vtable: VTableRef::Ref(vec.vtable.as_ref()),
-        }
-    }
-}
-
-impl<'a, V> From<&'a VecCopy<V>> for Meta<Ptr<V>>
-where
-    Ptr<V>: Clone,
-{
-    #[inline]
-    fn from(vec: &'a VecCopy<V>) -> Meta<Ptr<V>> {
-        Meta {
-            element_size: vec.element_size,
-            element_type_id: vec.element_type_id,
-            vtable: vec.vtable.clone(),
-        }
-    }
-}
-
 impl<V: ?Sized> ElementBytes for VecCopy<V> {
     fn element_size(&self) -> usize {
         self.element_size
@@ -1143,11 +1122,14 @@ mod tests {
         assert_eq!(a.byte_capacity(), 0); // Ensure nothing is allocated.
 
         // Empty buffer typed by the given type id.
-        let b = VecUnit::with_type_from(&a);
-        assert_eq!(b.len(), 0);
-        assert_eq!(b.as_bytes().len(), 0);
-        assert_eq!(b.element_type_id(), TypeId::of::<f32>());
-        assert_eq!(a.byte_capacity(), 0); // Ensure nothing is allocated.
+        #[cfg(feature = "traits")]
+        {
+            let b = VecUnit::with_type_from(&a);
+            assert_eq!(b.len(), 0);
+            assert_eq!(b.as_bytes().len(), 0);
+            assert_eq!(b.element_type_id(), TypeId::of::<f32>());
+            assert_eq!(a.byte_capacity(), 0); // Ensure nothing is allocated.
+        }
 
         // Empty typed buffer with a given capacity.
         let a = VecUnit::with_capacity::<f32>(4);
@@ -1548,6 +1530,7 @@ mod tests {
     }
 
     /// Test dynamically sized vtables.
+    #[cfg(feature = "traits")]
     #[test]
     fn dynamic_vtables() {
         use crate::into_dyn;

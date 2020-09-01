@@ -8,12 +8,9 @@ use crate::index_slice::*;
 use crate::slice_copy::*;
 use crate::traits::*;
 use crate::value::*;
+use crate::vtable::*;
 use crate::Elem;
 use crate::ElementBytes;
-
-// At the time of this writing, there is no evidence that there is a significant benefit in sharing
-// vtables via Rc or Arc, but to make potential future refactoring easier we use the Ptr alias.
-use std::boxed::Box as Ptr;
 
 /*
  * Immutable slice
@@ -37,34 +34,6 @@ impl<'a, V: HasDrop> SliceDrop<'a, V> {
         SliceDrop {
             data: unsafe { SliceCopy::from_slice_non_copy(slice) },
         }
-    }
-}
-
-impl<'a, V> From<SliceDrop<'a, V>> for Meta<VTableRef<'a, V>> {
-    #[inline]
-    fn from(slice: SliceDrop<'a, V>) -> Self {
-        Meta::from(slice.data)
-    }
-}
-
-impl<'a, V: Clone> From<SliceDrop<'a, V>> for Meta<Ptr<V>> {
-    #[inline]
-    fn from(slice: SliceDrop<'a, V>) -> Self {
-        Meta::from(slice.data)
-    }
-}
-
-impl<'a, V> From<SliceDropMut<'a, V>> for Meta<VTableRef<'a, V>> {
-    #[inline]
-    fn from(slice: SliceDropMut<'a, V>) -> Self {
-        Meta::from(slice.data)
-    }
-}
-
-impl<'a, V: Clone> From<SliceDropMut<'a, V>> for Meta<Ptr<V>> {
-    #[inline]
-    fn from(slice: SliceDropMut<'a, V>) -> Self {
-        Meta::from(slice.data)
     }
 }
 

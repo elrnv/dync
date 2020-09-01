@@ -15,8 +15,9 @@ use std::mem::{ManuallyDrop, MaybeUninit};
 use std::boxed::Box as Ptr;
 
 use crate::bytes::*;
+pub use crate::copy_value::*;
 use crate::traits::*;
-use crate::Elem;
+use crate::vtable::*;
 
 #[derive(Debug)]
 pub enum Error {
@@ -44,82 +45,6 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
-
-/// Defines a meta struct containing information about a type but not the type itself.
-///
-/// Note that here V would typically represent a pointer type.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Meta<V> {
-    pub element_size: usize,
-    pub element_type_id: TypeId,
-    pub vtable: V,
-}
-
-impl<'a, B: GetBytesMut, V: Clone + HasDrop> From<&'a Value<B, V>> for Meta<Ptr<V>> {
-    #[inline]
-    fn from(val: &'a Value<B, V>) -> Meta<Ptr<V>> {
-        Meta {
-            element_size: val.bytes.get_bytes_ref().len(),
-            element_type_id: val.type_id,
-            vtable: Ptr::clone(&val.vtable),
-        }
-    }
-}
-impl<'a, V: HasDrop> From<ValueRef<'a, V>> for Meta<VTableRef<'a, V>> {
-    #[inline]
-    fn from(val: ValueRef<'a, V>) -> Meta<VTableRef<'a, V>> {
-        Meta {
-            element_size: val.bytes.len(),
-            element_type_id: val.type_id,
-            vtable: val.vtable,
-        }
-    }
-}
-
-impl<'a, V: HasDrop> From<ValueMut<'a, V>> for Meta<VTableRef<'a, V>> {
-    #[inline]
-    fn from(val: ValueMut<'a, V>) -> Meta<VTableRef<'a, V>> {
-        Meta {
-            element_size: val.bytes.len(),
-            element_type_id: val.type_id,
-            vtable: val.vtable,
-        }
-    }
-}
-
-// Implement the basis for all value types.
-macro_rules! impl_value_base {
-    () => {
-        /// Get the size of the value pointed-to by this reference.
-        #[inline]
-        pub fn size(&self) -> usize {
-            self.bytes.get_bytes_ref().len()
-        }
-
-        /// Get the `TypeId` of the referenced value.
-        #[inline]
-        pub fn value_type_id(&self) -> TypeId {
-            self.type_id
-        }
-
-        /// Returns `true` if this referenced value's type is the same as `T`.
-        #[inline]
-        pub fn is<T: 'static>(&self) -> bool {
-            self.value_type_id() == TypeId::of::<T>()
-        }
-
-        // Check that this value represents the given type, and if so return the bytes.
-        // This is a helper for downcasts.
-        #[inline]
-        fn downcast_with<T: 'static, U, F: FnOnce(Self) -> U>(self, f: F) -> Option<U> {
-            if self.is::<T>() {
-                Some(f(self))
-            } else {
-                None
-            }
-        }
-    };
-}
 
 impl<T: Any> HasDrop for (DropFn, T) {
     #[inline]
@@ -166,53 +91,6 @@ impl<V: HasDebug> HasDebug for (DropFn, V) {
     #[inline]
     fn fmt_fn(&self) -> &FmtFn {
         &self.1.fmt_fn()
-    }
-}
-
-// Helper trait for calling trait functions that take bytes.
-pub trait GetBytesRef {
-    fn get_bytes_ref(&self) -> &[MaybeUninit<u8>];
-}
-pub trait GetBytesMut: GetBytesRef {
-    fn get_bytes_mut(&mut self) -> &mut [MaybeUninit<u8>];
-}
-
-impl GetBytesRef for Box<[MaybeUninit<u8>]> {
-    #[inline]
-    fn get_bytes_ref(&self) -> &[MaybeUninit<u8>] {
-        &*self
-    }
-}
-impl GetBytesMut for Box<[MaybeUninit<u8>]> {
-    #[inline]
-    fn get_bytes_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        &mut *self
-    }
-}
-
-impl GetBytesRef for MaybeUninit<usize> {
-    #[inline]
-    fn get_bytes_ref(&self) -> &[MaybeUninit<u8>] {
-        self.as_bytes()
-    }
-}
-impl GetBytesMut for MaybeUninit<usize> {
-    #[inline]
-    fn get_bytes_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        self.as_bytes_mut()
-    }
-}
-
-impl GetBytesRef for [MaybeUninit<u8>] {
-    #[inline]
-    fn get_bytes_ref(&self) -> &[MaybeUninit<u8>] {
-        self
-    }
-}
-impl GetBytesMut for [MaybeUninit<u8>] {
-    #[inline]
-    fn get_bytes_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        self
     }
 }
 
@@ -471,32 +349,6 @@ impl<B: GetBytesMut, V: ?Sized + HasDrop + HasHash> Hash for Value<B, V> {
     }
 }
 
-/// `VTable` defines a type that represents a virtual function table for some type `T`.
-///
-/// `T` is different than a type that can be turned into a trait object like `Box<dyn Any>`
-/// because a `VTable` effectively decouples the type's behaviour from the data it contains.
-///
-/// This mechanism allows the virtual function table to be attached to a homogeneous container, to
-/// prevent storing duplicates of these tables for each type instance stored in the container.
-///
-/// This is precisely how it is used to build `VecDyn<V>`, which is generic over the virtual table
-/// rather than the type itself.
-pub trait VTable<T> {
-    fn build_vtable() -> Self;
-}
-
-impl<T: Copy> VTable<T> for () {
-    #[inline]
-    fn build_vtable() -> Self {}
-}
-
-impl<T: DropBytes, V: VTable<T>> VTable<T> for (DropFn, V) {
-    #[inline]
-    fn build_vtable() -> Self {
-        (T::drop_bytes, V::build_vtable())
-    }
-}
-
 impl<B: GetBytesMut, V: ?Sized + HasDrop> Value<B, V> {
     impl_value_base!();
 }
@@ -547,85 +399,6 @@ impl<V: ?Sized + HasDrop> Value<MaybeUninit<usize>, V> {
     }
 }
 
-/// A VTable reference type.
-///
-/// Note we always need Drop because it's possible to clone ValueRef's contents, which need to know
-/// how to drop themselves.
-#[derive(Clone, Debug)]
-pub enum VTableRef<'a, V>
-where
-    V: ?Sized,
-{
-    Ref(&'a V),
-    Box(Box<V>),
-    #[cfg(feature = "shared-vtables")]
-    Rc(Rc<V>),
-}
-
-impl<'a, V: Clone + ?Sized> VTableRef<'a, V> {
-    #[inline]
-    pub fn take(self) -> V {
-        match self {
-            VTableRef::Ref(v) => v.clone(),
-            VTableRef::Box(v) => *v,
-            #[cfg(feature = "shared-vtables")]
-            VTableRef::Rc(v) => Rc::try_unwrap(v).unwrap_or_else(|v| (*v).clone()),
-        }
-    }
-
-    #[inline]
-    pub fn into_owned(self) -> Ptr<V> {
-        match self {
-            VTableRef::Ref(v) => Ptr::new(v.clone()),
-            VTableRef::Box(v) => v,
-            #[cfg(feature = "shared-vtables")]
-            VTableRef::Rc(v) => Rc::clone(&v),
-        }
-    }
-}
-
-impl<'a, V: ?Sized> std::ops::Deref for VTableRef<'a, V> {
-    type Target = V;
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        self.as_ref()
-    }
-}
-
-impl<'a, V: ?Sized> From<&'a V> for VTableRef<'a, V> {
-    #[inline]
-    fn from(v: &'a V) -> VTableRef<'a, V> {
-        VTableRef::Ref(v)
-    }
-}
-
-impl<'a, V: ?Sized> From<Box<V>> for VTableRef<'a, V> {
-    #[inline]
-    fn from(v: Box<V>) -> VTableRef<'a, V> {
-        VTableRef::Box(v)
-    }
-}
-
-#[cfg(feature = "shared-vtables")]
-impl<'a, V: ?Sized> From<Ptr<V>> for VTableRef<'a, V> {
-    #[inline]
-    fn from(v: Ptr<V>) -> VTableRef<'a, V> {
-        VTableRef::Rc(v)
-    }
-}
-
-impl<'a, V: ?Sized> AsRef<V> for VTableRef<'a, V> {
-    #[inline]
-    fn as_ref(&self) -> &V {
-        match self {
-            VTableRef::Ref(v) => v,
-            VTableRef::Box(v) => &*v,
-            #[cfg(feature = "shared-vtables")]
-            VTableRef::Rc(v) => &*v,
-        }
-    }
-}
-
 macro_rules! impl_value_ref_traits {
     ($value_ref:ident : $($maybe_drop:ident)*) => {
         unsafe impl<'a, V: ?Sized + HasSend $( + $maybe_drop)*> Send for $value_ref<'a, V> {}
@@ -664,6 +437,10 @@ macro_rules! impl_value_ref_traits {
         impl<'a, V: ?Sized + HasEq $( + $maybe_drop)*> Eq for $value_ref<'a, V> {}
     }
 }
+
+// Impl value ref traits for CopyValue types.
+impl_value_ref_traits!(CopyValueMut:);
+impl_value_ref_traits!(CopyValueRef:);
 
 /// A generic value reference into a buffer.
 #[derive(Clone)]
@@ -995,179 +772,6 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
     }
 }
 
-/// A generic value reference to a `Copy` type.
-#[derive(Clone)]
-pub struct CopyValueRef<'a, V = ()>
-where
-    V: ?Sized,
-{
-    pub(crate) bytes: &'a [MaybeUninit<u8>],
-    pub(crate) type_id: TypeId,
-    pub(crate) vtable: VTableRef<'a, V>,
-}
-
-impl_value_ref_traits!(CopyValueRef:);
-
-impl<'a, V> CopyValueRef<'a, V> {
-    /// Create a new `CopyValueRef` from a typed reference.
-    #[inline]
-    pub fn new<T: Elem>(typed: &'a T) -> CopyValueRef<'a, V>
-    where
-        V: VTable<T>,
-    {
-        CopyValueRef {
-            bytes: typed.as_bytes(),
-            type_id: TypeId::of::<T>(),
-            vtable: VTableRef::Box(Box::new(V::build_vtable())),
-        }
-    }
-}
-
-impl<'a, V: ?Sized> CopyValueRef<'a, V> {
-    impl_value_base!();
-
-    /// Create a new `CopyValueref` from a slice of bytes and an associated `TypeId`.
-    ///
-    /// # Safety
-    ///
-    /// The given bytes must be the correct representation of the type given `TypeId`.
-    #[inline]
-    pub(crate) unsafe fn from_raw_parts(
-        bytes: &'a [MaybeUninit<u8>],
-        type_id: TypeId,
-        vtable: impl Into<VTableRef<'a, V>>,
-    ) -> CopyValueRef<'a, V> {
-        CopyValueRef {
-            bytes,
-            type_id,
-            vtable: vtable.into(),
-        }
-    }
-
-    /// Downcast this value reference into a borrowed `T` type. Return `None` if the downcast fails.
-    #[inline]
-    pub fn downcast<T: Elem>(self) -> Option<&'a T> {
-        // This is safe since we check that self.bytes represent a `T`.
-        self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes(b.bytes) })
-    }
-
-    #[inline]
-    pub fn upcast<U: ?Sized + From<V>>(self) -> CopyValueRef<'a, U>
-    where
-        V: Clone,
-    {
-        CopyValueRef {
-            bytes: self.bytes,
-            type_id: self.type_id,
-            vtable: VTableRef::Box(Box::new(U::from(self.vtable.take()))),
-        }
-    }
-
-    #[inline]
-    pub fn upcast_ref<U: ?Sized + From<V>>(&self) -> CopyValueRef<U>
-    where
-        V: Clone,
-    {
-        let vtable = self.vtable.as_ref();
-        CopyValueRef {
-            bytes: self.bytes,
-            type_id: self.type_id,
-            vtable: VTableRef::Box(Box::new(U::from((*vtable).clone()))),
-        }
-    }
-}
-
-/// A generic mutable `Copy` value reference.
-pub struct CopyValueMut<'a, V = ()>
-where
-    V: ?Sized,
-{
-    pub(crate) bytes: &'a mut [MaybeUninit<u8>],
-    pub(crate) type_id: TypeId,
-    pub(crate) vtable: VTableRef<'a, V>,
-}
-
-impl_value_ref_traits!(CopyValueMut:);
-
-impl<'a, V> CopyValueMut<'a, V> {
-    /// Create a new `CopyValueMut` from a typed mutable reference.
-    #[inline]
-    pub fn new<T: Elem>(typed: &'a mut T) -> CopyValueMut<'a, V>
-    where
-        V: VTable<T>,
-    {
-        CopyValueMut {
-            bytes: typed.as_bytes_mut(),
-            type_id: TypeId::of::<T>(),
-            vtable: VTableRef::Box(Box::new(V::build_vtable())),
-        }
-    }
-}
-
-impl<'a, V: ?Sized> CopyValueMut<'a, V> {
-    impl_value_base!();
-
-    /// Create a new `CopyValueMut` from a slice of bytes and an associated `TypeId`.
-    ///
-    /// # Safety
-    ///
-    /// The given bytes must be the correct representation of the type given `TypeId`.
-    #[inline]
-    pub(crate) unsafe fn from_raw_parts(
-        bytes: &'a mut [MaybeUninit<u8>],
-        type_id: TypeId,
-        vtable: impl Into<VTableRef<'a, V>>,
-    ) -> CopyValueMut<'a, V> {
-        CopyValueMut {
-            bytes,
-            type_id,
-            vtable: vtable.into(),
-        }
-    }
-
-    /// Copy value from `other` to `self` and return `Self`.
-    ///
-    /// This function returns `None` if the values have different types.
-    #[inline]
-    pub fn copy(self, other: CopyValueRef<'a, V>) -> Option<Self> {
-        if self.value_type_id() == other.value_type_id() {
-            self.bytes.copy_from_slice(other.bytes);
-            Some(self)
-        } else {
-            None
-        }
-    }
-
-    /// Swap the values between `other` and `self`.
-    #[inline]
-    pub fn swap(&mut self, other: &mut CopyValueMut<V>) {
-        if self.value_type_id() == other.value_type_id() {
-            self.bytes.swap_with_slice(&mut other.bytes);
-            std::mem::swap(&mut self.type_id, &mut other.type_id);
-        }
-    }
-
-    /// Downcast this value reference into a borrowed `T` type. Return `None` if the downcast fails.
-    #[inline]
-    pub fn downcast<T: Elem>(self) -> Option<&'a mut T> {
-        // This is safe since we check that self.bytes represent a `T`.
-        self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes_mut(b.bytes) })
-    }
-
-    #[inline]
-    pub fn upcast<U: From<V>>(&mut self) -> CopyValueMut<U>
-    where
-        V: Clone,
-    {
-        let vtable = self.vtable.as_ref();
-        CopyValueMut {
-            bytes: self.bytes,
-            type_id: self.type_id,
-            vtable: VTableRef::Box(Box::new(U::from(vtable.clone()))),
-        }
-    }
-}
-
 /*
  * Valid conversions.
  */
@@ -1176,17 +780,6 @@ impl<'a, V: HasDrop> From<ValueMut<'a, V>> for ValueRef<'a, V> {
     #[inline]
     fn from(v: ValueMut<'a, V>) -> ValueRef<'a, V> {
         ValueRef {
-            bytes: v.bytes,
-            type_id: v.type_id,
-            vtable: v.vtable,
-        }
-    }
-}
-
-impl<'a, V: HasDrop> From<CopyValueMut<'a, V>> for CopyValueRef<'a, V> {
-    #[inline]
-    fn from(v: CopyValueMut<'a, V>) -> CopyValueRef<'a, V> {
-        CopyValueRef {
             bytes: v.bytes,
             type_id: v.type_id,
             vtable: v.vtable,

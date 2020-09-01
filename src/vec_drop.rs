@@ -1,4 +1,51 @@
+//! This module extends the `VecCopy` type to more general non-`Copy` types that can be `Drop`ped.
+//!
+//! This module is enabled by the `traits` feature.
+//!
+//! # Examples
+//!
+//! Create homogeneous untyped `Vec`s that store a single virtual function table for all contained
+//! elements:
+//! ```
+//! use dync::VecDrop;
+//! // Create an untyped `Vec`.
+//! let vec: VecDrop = vec![1_i32,2,3,4].into();
+//! // Access elements either by downcasting to the underlying type.
+//! for value_ref in vec.iter() {
+//!     let int = value_ref.downcast::<i32>().unwrap();
+//!     println!("{}", int);
+//! }
+//! // Or downcast the iterator directly for more efficient traversal.
+//! for int in vec.iter_as::<i32>().unwrap() {
+//!     println!("{}", int);
+//! }
+//! ```
+//!
+//! The `VecDrop` type defaults to the empty virtual table (with the exception of the drop
+//! function), which is not terribly useful when the contained values need to be processed in
+//! some way.  `dync` provides support for common standard library traits such as:
+//! - `Drop`
+//! - `Clone`
+//! - `PartialEq`
+//! - `std::hash::Hash`
+//! - `std::fmt::Debug`
+//! - `Send` and `Sync`
+//! - more to come
+//!
+//! So to produce a `VecDrop` of a printable type, we could instead do
+//! ```
+//! use dync::{VecDrop, traits::DebugVTable};
+//! // Create an untyped `Vec` of `std::fmt::Debug` types.
+//! let vec: VecDrop<DebugVTable> = vec![1_i32,2,3,4].into();
+//! // We can now iterate and print value references (which inherit the VTable from the container)
+//! // without needing a downcast.
+//! for value_ref in vec.iter() {
+//!     println!("{:?}", value_ref);
+//! }
+//! ```
+
 #![allow(dead_code)]
+
 use std::{
     any::{Any, TypeId},
     fmt,
@@ -13,9 +60,11 @@ use std::boxed::Box as Ptr;
 #[cfg(feature = "numeric")]
 use num_traits::{cast, NumCast, Zero};
 
+use crate::meta::*;
 use crate::slice_drop::*;
 use crate::traits::*;
 use crate::value::*;
+use crate::vtable::*;
 use crate::ElementBytes;
 use crate::VecCopy;
 
@@ -736,20 +785,6 @@ impl<V: ?Sized + HasDrop + HasClone> VecDrop<V> {
     }
 }
 
-impl<'a, V: Clone + HasDrop> From<&'a VecDrop<V>> for Meta<Ptr<V>> {
-    #[inline]
-    fn from(v: &'a VecDrop<V>) -> Self {
-        Meta::from(&*v.data)
-    }
-}
-
-impl<'a, V: Clone + HasDrop> From<&'a VecDrop<V>> for Meta<VTableRef<'a, V>> {
-    #[inline]
-    fn from(v: &'a VecDrop<V>) -> Self {
-        Meta::from(&*v.data)
-    }
-}
-
 /// Convert a `Vec` to a buffer.
 impl<T: Elem, V: HasDrop + VTable<T>> From<Vec<T>> for VecDrop<V> {
     #[inline]
@@ -775,6 +810,20 @@ impl<T: Elem, V: ?Sized + HasDrop + VTable<T>> Into<Option<Vec<T>>> for VecDrop<
     #[inline]
     fn into(self) -> Option<Vec<T>> {
         self.into_vec()
+    }
+}
+
+impl<'a, V: Clone + HasDrop> From<&'a VecDrop<V>> for Meta<Ptr<V>> {
+    #[inline]
+    fn from(v: &'a VecDrop<V>) -> Self {
+        Meta::from(&*v.data)
+    }
+}
+
+impl<'a, V: Clone + HasDrop> From<&'a VecDrop<V>> for Meta<VTableRef<'a, V>> {
+    #[inline]
+    fn from(v: &'a VecDrop<V>) -> Self {
+        Meta::from(&*v.data)
     }
 }
 

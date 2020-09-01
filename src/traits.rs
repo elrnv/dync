@@ -5,7 +5,7 @@
 //! The remaining traits improve compatibility with the rest of the standard library.
 
 use crate::bytes::*;
-use crate::value::VTable;
+use crate::vtable::VTable;
 use dync_derive::dync_trait_method;
 use std::fmt;
 use std::hash::{Hash, Hasher};

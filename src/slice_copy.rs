@@ -4,14 +4,11 @@ use std::{
     slice,
 };
 
+use crate::copy_value::*;
 use crate::index_slice::*;
-use crate::value::*;
+use crate::vtable::*;
 use crate::CopyElem;
 use crate::{ElementBytes, ElementBytesMut};
-
-// At the time of this writing, there is no evidence that there is a significant benefit in sharing
-// vtables via Rc or Arc, but to make potential future refactoring easier we use the Ptr alias.
-use std::boxed::Box as Ptr;
 
 /*
  * Immutable slice
@@ -61,28 +58,6 @@ impl<'a, V> SliceCopy<'a, V> {
             element_size,
             element_type_id: TypeId::of::<T>(),
             vtable: VTableRef::Box(Box::new(V::build_vtable())),
-        }
-    }
-}
-
-impl<'a, V> From<SliceCopy<'a, V>> for Meta<VTableRef<'a, V>> {
-    #[inline]
-    fn from(slice: SliceCopy<'a, V>) -> Self {
-        Meta {
-            element_size: slice.element_size,
-            element_type_id: slice.element_type_id,
-            vtable: slice.vtable,
-        }
-    }
-}
-
-impl<'a, V: Clone> From<SliceCopy<'a, V>> for Meta<Ptr<V>> {
-    #[inline]
-    fn from(slice: SliceCopy<'a, V>) -> Self {
-        Meta {
-            element_size: slice.element_size,
-            element_type_id: slice.element_type_id,
-            vtable: slice.vtable.into_owned(),
         }
     }
 }
@@ -831,28 +806,6 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
     }
 }
 
-impl<'a, V> From<SliceCopyMut<'a, V>> for Meta<VTableRef<'a, V>> {
-    #[inline]
-    fn from(slice: SliceCopyMut<'a, V>) -> Self {
-        Meta {
-            element_size: slice.element_size,
-            element_type_id: slice.element_type_id,
-            vtable: slice.vtable,
-        }
-    }
-}
-
-impl<'a, V: Clone> From<SliceCopyMut<'a, V>> for Meta<Ptr<V>> {
-    #[inline]
-    fn from(slice: SliceCopyMut<'a, V>) -> Self {
-        Meta {
-            element_size: slice.element_size,
-            element_type_id: slice.element_type_id,
-            vtable: slice.vtable.into_owned(),
-        }
-    }
-}
-
 impl<'a, V: ?Sized> ElementBytes for SliceCopyMut<'a, V> {
     #[inline]
     fn element_size(&self) -> usize {
@@ -906,13 +859,13 @@ impl<'b, 'a: 'b, V: ?Sized> From<&'b SliceCopyMut<'a, V>> for SliceCopy<'b, V> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::VecCopy;
-
     /// Test dynamically sized vtables.
+    #[cfg(feature = "traits")]
     #[test]
     fn dynamic_vtables() {
+        use super::*;
         use crate::into_dyn;
+        use crate::VecCopy;
         let vec = vec![1u8, 100, 23];
 
         // SliceCopyMut
