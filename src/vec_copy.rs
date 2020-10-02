@@ -961,14 +961,15 @@ impl<V: ?Sized> VecCopy<V> {
     /// }
     /// ```
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = CopyValueRef<V>>
-    where
-        V: Clone,
-    {
-        self.as_slice().into_iter()
-        //self.byte_chunks().map(move |bytes| unsafe {
-        //    CopyValueRef::from_raw_parts(bytes, self.element_type_id(), &*self.vtable)
-        //})
+    pub fn iter(&self) -> impl Iterator<Item = CopyValueRef<V>> {
+        self.data.byte_chunks().map(move |bytes| unsafe {
+            CopyValueRef::from_raw_parts(
+                bytes,
+                self.element_type_id(),
+                self.data.elem.alignment,
+                &*self.vtable,
+            )
+        })
     }
 
     /// Return an iterator over untyped value references stored in this buffer.
@@ -988,22 +989,19 @@ impl<V: ?Sized> VecCopy<V> {
     /// assert_eq!(buf.into_vec::<f32>().unwrap(), vec![100.0f32; 5]);
     /// ```
     #[inline]
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = CopyValueMut<V>>
-    where
-        V: Clone,
-    {
-        self.as_mut_slice().into_iter()
-        //let &mut VecCopy {
-        //    ref mut data,
-        //    element_size,
-        //    element_type_id,
-        //    ref vtable,
-        //} = self;
-        //let vtable = vtable.as_ref();
-        //data.chunks_exact_mut(element_size)
-        //    .map(move |bytes| unsafe {
-        //        CopyValueMut::from_raw_parts(bytes, element_type_id, vtable)
-        //    })
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = CopyValueMut<V>> {
+        let &mut VecCopy {
+            ref mut data,
+            ref vtable,
+        } = self;
+        let element_type_id = data.elem.type_id;
+        let element_alignment = data.elem.alignment;
+        let vtable = vtable.as_ref();
+        unsafe {
+            data.byte_chunks_mut().map(move |bytes| {
+                CopyValueMut::from_raw_parts(bytes, element_type_id, element_alignment, vtable)
+            })
+        }
     }
 
     /// Push a value to this `VecCopy` by reference and return a mutable reference to `Self`.

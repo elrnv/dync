@@ -99,17 +99,12 @@ impl<V: ?Sized + HasDrop> Drop for VecDrop<V> {
 impl<V: ?Sized + Clone + HasDrop + HasClone> Clone for VecDrop<V> {
     fn clone(&self) -> Self {
         let data_clone = |vec_void: &VecVoid| {
-            std::dbg!(&vec_void);
             let mut new_data = vec_void.clone();
-            std::dbg!(&vec_void);
-            std::dbg!(&new_data);
             unsafe {
                 vec_void
                     .byte_chunks()
                     .zip(new_data.byte_chunks_mut())
                     .for_each(|(src, dst)| {
-                        std::dbg!(&src);
-                        std::dbg!(&dst);
                         // This is safe since `clone_into_raw_fn` ensures that the
                         // bytes in dst are not dropped before cloning, which is essential, since they
                         // are just copied by the `.to_vec()` call above.
@@ -124,7 +119,7 @@ impl<V: ?Sized + Clone + HasDrop + HasClone> Clone for VecDrop<V> {
     }
 }
 
-impl<V: ?Sized + HasDrop + HasPartialEq + Clone> PartialEq for VecDrop<V> {
+impl<V: ?Sized + HasDrop + HasPartialEq> PartialEq for VecDrop<V> {
     fn eq(&self, other: &Self) -> bool {
         self.iter()
             .zip(other.iter())
@@ -132,15 +127,15 @@ impl<V: ?Sized + HasDrop + HasPartialEq + Clone> PartialEq for VecDrop<V> {
     }
 }
 
-impl<V: ?Sized + HasDrop + HasEq + Clone> Eq for VecDrop<V> {}
+impl<V: ?Sized + HasDrop + HasEq> Eq for VecDrop<V> {}
 
-impl<V: ?Sized + HasDrop + HasHash + Clone> std::hash::Hash for VecDrop<V> {
+impl<V: ?Sized + HasDrop + HasHash> std::hash::Hash for VecDrop<V> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.iter().for_each(|elem| elem.hash(state));
     }
 }
 
-impl<V: ?Sized + HasDrop + HasDebug + Clone> fmt::Debug for VecDrop<V> {
+impl<V: ?Sized + HasDrop + HasDebug> fmt::Debug for VecDrop<V> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_list().entries(self.iter()).finish()
     }
@@ -503,21 +498,16 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
     /// As a result, this type of iteration is typically less efficient if a typed value is
     /// needed for each element.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = ValueRef<V>>
-    where
-        V: Clone,
-    {
-        self.as_slice().into_iter()
-
-        //let VecCopy {
-        //    data,
-        //    element_size,
-        //    element_type_id,
-        //    vtable,
-        //} = &**data;
-        //data.chunks_exact(*element_size).map(move |bytes| unsafe {
-        //    ValueRef::from_raw_parts(bytes, *element_type_id, vtable.as_ref())
-        //})
+    pub fn iter(&self) -> impl Iterator<Item = ValueRef<V>> {
+        let VecCopy { data, vtable } = &*self.data;
+        data.byte_chunks().map(move |bytes| unsafe {
+            ValueRef::from_raw_parts(
+                bytes,
+                data.elem.type_id,
+                data.elem.alignment,
+                vtable.as_ref(),
+            )
+        })
     }
 
     /// Get a mutable reference to a value stored in this container at index `i`.
@@ -551,20 +541,19 @@ impl<V: ?Sized + HasDrop> VecDrop<V> {
     /// result, this type of iteration is typically less efficient if a typed value is needed
     /// for each element.
     #[inline]
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = ValueMut<V>>
-    where
-        V: Clone,
-    {
-        self.as_mut_slice().into_iter()
-        //let VecCopy {
-        //    ref mut data,
-        //    element_size,
-        //    element_type_id,
-        //    ref vtable,
-        //} = *self.data;
-        //let vtable = vtable.as_ref();
-        //data.chunks_exact_mut(element_size)
-        //    .map(move |bytes| unsafe { ValueMut::from_raw_parts(bytes, element_type_id, vtable) })
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = ValueMut<V>> {
+        let VecCopy {
+            ref mut data,
+            ref vtable,
+        } = *self.data;
+        let vtable = vtable.as_ref();
+        let element_type_id = data.elem.type_id;
+        let element_alignment = data.elem.alignment;
+        unsafe {
+            data.byte_chunks_mut().map(move |bytes| {
+                ValueMut::from_raw_parts(bytes, element_type_id, element_alignment, vtable)
+            })
+        }
     }
 
     pub fn as_slice(&self) -> SliceDrop<V> {
