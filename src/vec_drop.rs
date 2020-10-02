@@ -660,7 +660,7 @@ impl<V: HasDrop> VecDrop<V> {
         {
             debug_assert_eq!(buf.element_type_id(), TypeId::of::<I>()); // Check invariant.
             Some(
-                buf.reinterpret_as_slice()
+                buf.as_slice_as_unchecked()
                     .iter()
                     .map(|elem: &I| cast(*elem).unwrap_or_else(O::zero))
                     .collect(),

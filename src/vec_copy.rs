@@ -812,12 +812,23 @@ impl<V: ?Sized> VecCopy<V> {
     }
 
     /// Convert this buffer into a typed slice.
-    /// Returs `None` if the given type `T` doesn't match the internal.
+    ///
+    /// Returns `None` if the given type `T` doesn't match the internal.
     #[inline]
     pub fn as_slice_as<T: Any>(&self) -> Option<&[T]> {
         let ptr = self.check_ref::<T>()?.data.ptr as *const T;
         // SAFETY: `T` is `CopyElem` guaranteed at construction.
         Some(unsafe { slice::from_raw_parts(ptr, self.len()) })
+    }
+
+    /// Convert this buffer into a typed slice.
+    ///
+    /// # Safety
+    ///
+    /// The underlying type must correspond to `T`.
+    #[inline]
+    pub(crate) unsafe fn as_slice_as_unchecked<T: Any>(&self) -> &[T] {
+        slice::from_raw_parts(self.data.ptr as *const T, self.len())
     }
 
     /// Convert this buffer into a typed mutable slice.
@@ -1067,30 +1078,30 @@ impl<V> VecCopy<V> {
 
     #[cfg(feature = "numeric")]
     /// Cast a numeric `VecCopy` into the given output `Vec` type.
-    pub fn cast_into_vec<T>(self) -> Vec<T>
+    pub fn cast_into_vec<T>(&self) -> Vec<T>
     where
         T: CopyElem + NumCast + Zero,
     {
         // Helper function (generic on the input) to convert the given VecCopy into Vec.
-        unsafe fn convert_into_vec<I, O, V>(buf: VecCopy<V>) -> Vec<O>
+        unsafe fn convert_into_vec<I, O, V>(buf: &VecCopy<V>) -> Vec<O>
         where
             I: CopyElem + Any + NumCast,
             O: CopyElem + NumCast + Zero,
         {
             debug_assert_eq!(buf.element_type_id(), TypeId::of::<I>()); // Check invariant.
-            buf.reinterpret_into_vec()
-                .into_iter()
-                .map(|elem: I| cast(elem).unwrap_or_else(O::zero))
+            buf.as_slice_as_unchecked()
+                .iter()
+                .map(|elem: &I| cast(*elem).unwrap_or_else(O::zero))
                 .collect()
         }
-        call_numeric_buffer_fn!( convert_into_vec::<_, T, V>(self) or { Vec::new() } )
+        call_numeric_buffer_fn!( convert_into_vec::<_, T, V>(&self) or { Vec::new() } )
     }
 
     #[cfg(feature = "numeric")]
     /// Display the contents of this buffer reinterpreted in the given type.
     unsafe fn reinterpret_display<T: CopyElem + fmt::Display>(&self, f: &mut fmt::Formatter) {
         debug_assert_eq!(self.element_type_id(), TypeId::of::<T>()); // Check invariant.
-        for item in self.reinterpret_iter::<T>() {
+        for item in self.as_slice_as_unchecked::<T>().iter() {
             write!(f, "{} ", item).expect("Error occurred while writing an VecCopy.");
         }
     }
@@ -1286,16 +1297,17 @@ impl VecVoid {
             reinterpret::reinterpret_mut_slice(self.data.as_mut_slice())
         }
 
-        /// Borrow buffer data and iterate over reinterpreted underlying data.
-        ///
-        /// # Safety
-        ///
-        /// Each underlying element must be correctly represented by a `&T` when borrowed as
-        /// `&[MaybeUninit<u8>]`.
-        #[inline]
-        pub unsafe fn reinterpret_iter<T>(&self) -> slice::Iter<T> {
-            self.reinterpret_as_slice().iter()
-        }
+
+    /// Borrow buffer data and iterate over reinterpreted underlying data.
+    ///
+    /// # Safety
+    ///
+    /// Each underlying element must be correctly represented by a `&T` when borrowed as
+    /// `&[MaybeUninit<u8>]`.
+    #[inline]
+    pub(crate) unsafe fn reinterpret_iter<T>(&self) -> slice::Iter<T> {
+        self.reinterpret_as_slice().iter()
+    }
 
         /// Mutably borrow buffer data and mutably iterate over reinterpreted underlying data.
         ///

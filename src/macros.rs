@@ -14,11 +14,9 @@
 ///
 /// # Examples
 ///
-/// ```rust
-/// # #[macro_use] extern crate dync;
-/// # use std::fmt;
-/// # use std::any::Any;
-/// # use dync::VecCopy;
+/// ```
+/// use std::{fmt, any::Any};
+/// use dync::{VecCopy, call_numeric_buffer_fn};
 /// // Implement pretty printing of a `VecCopy` derivative for numeric buffers.
 /// struct MyBuffer(VecCopy);
 /// impl fmt::Display for MyBuffer {
