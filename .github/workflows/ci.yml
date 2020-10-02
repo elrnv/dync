@@ -35,6 +35,19 @@ jobs:
       - name: Run Valgrind
         run: ./valgrind_check.sh
 
+  miri:
+    name: Run Miri on Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          components: miri
+          override: true
+      - run: cargo miri test
+
   clippy:
     name: "Clippy (stable)"
     runs-on: ubuntu-latest
