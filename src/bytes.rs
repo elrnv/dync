@@ -173,7 +173,7 @@ where
 // memory layout throughout the execution of the program.
 //
 // For non-Copy types, memory safety is ensured by effectively forgetting reinterpreted memory,
-// thus inhibiting any drop calls, which would otherwise could cause dangling references when the
+// thus inhibiting any drop calls, which could otherwise cause dangling references when the
 // memory is reinterpreted back into the original type.
 //
 // In summary, reinterpreting types as bytes is dangerous, but it should not cause undefined

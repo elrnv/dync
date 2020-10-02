@@ -8,6 +8,7 @@ use crate::index_slice::*;
 use crate::slice_copy::*;
 use crate::traits::*;
 use crate::value::*;
+use crate::vec_copy::ElemInfo;
 use crate::vtable::*;
 use crate::Elem;
 use crate::ElementBytes;
@@ -43,14 +44,9 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub fn into_raw_parts(self) -> (&'a [MaybeUninit<u8>], usize, TypeId, VTableRef<'a, V>) {
-        let SliceCopy {
-            data,
-            element_size,
-            element_type_id,
-            vtable,
-        } = self.data;
-        (data, element_size, element_type_id, vtable)
+    pub fn into_raw_parts(self) -> (&'a [MaybeUninit<u8>], ElemInfo, VTableRef<'a, V>) {
+        let SliceCopy { data, elem, vtable } = self.data;
+        (data, elem, vtable)
     }
 
     /// Construct a `SliceDrop` from raw bytes and type metadata.
@@ -65,12 +61,11 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
     #[inline]
     pub unsafe fn from_raw_parts(
         data: &'a [MaybeUninit<u8>],
-        element_size: usize,
-        element_type_id: TypeId,
+        elem: ElemInfo,
         vtable: impl Into<VTableRef<'a, V>>,
     ) -> Self {
         SliceDrop {
-            data: SliceCopy::from_raw_parts(data, element_size, element_type_id, vtable),
+            data: SliceCopy::from_raw_parts(data, elem, vtable),
         }
     }
 
@@ -193,8 +188,25 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = ValueRef<V>> {
         self.data.byte_chunks().map(move |bytes| unsafe {
-            ValueRef::from_raw_parts(bytes, self.element_type_id(), self.data.vtable.as_ref())
+            ValueRef::from_raw_parts(
+                bytes,
+                self.element_type_id(),
+                self.data.elem.alignment,
+                self.data.vtable.as_ref(),
+            )
         })
+    }
+
+    #[inline]
+    pub fn into_iter(self) -> impl Iterator<Item = ValueRef<'a, V>>
+    where
+        V: Clone,
+    {
+        let SliceCopy { data, elem, vtable } = self.data;
+        data.chunks_exact(elem.num_bytes())
+            .map(move |bytes| unsafe {
+                ValueRef::from_raw_parts(bytes, elem.type_id, elem.alignment, vtable.clone())
+            })
     }
 
     #[inline]
@@ -220,6 +232,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
             ValueRef::from_raw_parts(
                 &self.index_byte_slice(i),
                 self.element_type_id(),
+                self.data.elem.alignment,
                 self.data.vtable.as_ref(),
             )
         }
@@ -327,14 +340,9 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
     /// stabilized.
     #[inline]
-    pub fn into_raw_parts(self) -> (&'a [MaybeUninit<u8>], usize, TypeId, VTableRef<'a, V>) {
-        let SliceCopyMut {
-            data,
-            element_size,
-            element_type_id,
-            vtable,
-        } = self.data;
-        (data, element_size, element_type_id, vtable)
+    pub fn into_raw_parts(self) -> (&'a [MaybeUninit<u8>], ElemInfo, VTableRef<'a, V>) {
+        let SliceCopyMut { data, elem, vtable } = self.data;
+        (data, elem, vtable)
     }
 
     /// Construct a `SliceDropMut` from raw bytes and type metadata.
@@ -349,12 +357,11 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     #[inline]
     pub unsafe fn from_raw_parts(
         data: &'a mut [MaybeUninit<u8>],
-        element_size: usize,
-        element_type_id: TypeId,
+        elem: ElemInfo,
         vtable: impl Into<VTableRef<'a, V>>,
     ) -> SliceDropMut<'a, V> {
         SliceDropMut {
-            data: SliceCopyMut::from_raw_parts(data, element_size, element_type_id, vtable),
+            data: SliceCopyMut::from_raw_parts(data, elem, vtable),
         }
     }
 
@@ -523,13 +530,24 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     {
         let SliceCopyMut {
             ref mut data,
-            element_size,
-            element_type_id,
+            elem,
             ref vtable,
         } = self.data;
-        data.chunks_exact_mut(element_size)
+        data.chunks_exact_mut(elem.num_bytes())
             .map(move |bytes| unsafe {
-                ValueMut::from_raw_parts(bytes, element_type_id, vtable.as_ref())
+                ValueMut::from_raw_parts(bytes, elem.type_id, elem.alignment, vtable.as_ref())
+            })
+    }
+
+    #[inline]
+    pub fn into_iter(self) -> impl Iterator<Item = ValueMut<'a, V>>
+    where
+        V: Clone,
+    {
+        let SliceCopyMut { data, elem, vtable } = self.data;
+        data.chunks_exact_mut(elem.num_bytes())
+            .map(move |bytes| unsafe {
+                ValueMut::from_raw_parts(bytes, elem.type_id, elem.alignment, vtable.clone())
             })
     }
 
@@ -563,6 +581,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
             ValueRef::from_raw_parts(
                 &self.data.index_byte_slice(i),
                 self.element_type_id(),
+                self.data.elem.alignment,
                 self.data.vtable.as_ref(),
             )
         }
@@ -574,12 +593,14 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
         let CopyValueMut {
             bytes,
             type_id,
+            alignment,
             vtable,
         } = self.data.get_mut(i);
 
         ValueMut {
             bytes,
             type_id,
+            alignment,
             vtable,
         }
     }
@@ -677,14 +698,7 @@ impl<'a, V: ?Sized> From<SliceDropMut<'a, V>> for SliceDrop<'a, V> {
 impl<'b, 'a: 'b, V: ?Sized + HasDrop> From<&'b SliceDropMut<'a, V>> for SliceDrop<'b, V> {
     #[inline]
     fn from(s: &'b SliceDropMut<'a, V>) -> SliceDrop<'b, V> {
-        unsafe {
-            SliceDrop::from_raw_parts(
-                s.data.data,
-                s.data.element_size,
-                s.data.element_type_id,
-                s.data.vtable.as_ref(),
-            )
-        }
+        unsafe { SliceDrop::from_raw_parts(s.data.data, s.data.elem, s.data.vtable.as_ref()) }
     }
 }
 

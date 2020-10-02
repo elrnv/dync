@@ -1,6 +1,6 @@
 //! This module defines a mechanism for type earasure simplar to `dyn Any`.
 //!
-//! This method allows storing and referencing values coming from a `DataBuffer` in other `std`
+//! This method allows storing and referencing values coming from a `VecDrop` inside other `std`
 //! containers without needing a downcast.
 //!
 #![allow(dead_code)]
@@ -96,11 +96,12 @@ impl<V: HasDebug> HasDebug for (DropFn, V) {
 
 pub struct Value<B, V>
 where
-    B: GetBytesMut,
+    B: GetBytesMut + DropAsAligned,
     V: ?Sized + HasDrop,
 {
     pub(crate) bytes: ManuallyDrop<B>,
     pub(crate) type_id: TypeId,
+    pub(crate) alignment: usize,
     pub(crate) vtable: ManuallyDrop<Ptr<V>>,
 }
 
@@ -118,6 +119,7 @@ impl<V: HasDrop> SmallValue<V> {
         val.try_into_usize().map(|usized_value| Value {
             bytes: ManuallyDrop::new(usized_value),
             type_id: TypeId::of::<T>(),
+            alignment: std::mem::align_of::<T>(),
             vtable: ManuallyDrop::new(Ptr::new(V::build_vtable())),
         })
     }
@@ -141,11 +143,13 @@ impl<V: ?Sized + HasDrop> SmallValue<V> {
     pub(crate) unsafe fn from_raw_parts(
         bytes: MaybeUninit<usize>,
         type_id: TypeId,
+        alignment: usize,
         vtable: Ptr<V>,
     ) -> Value<MaybeUninit<usize>, V> {
         Value {
             bytes: ManuallyDrop::new(bytes),
             type_id,
+            alignment,
             vtable: ManuallyDrop::new(vtable),
         }
     }
@@ -160,6 +164,7 @@ impl<V: ?Sized + HasDrop> SmallValue<V> {
         let output = Value {
             bytes: md.bytes,
             type_id: md.type_id,
+            alignment: md.alignment,
             vtable: ManuallyDrop::new(Ptr::new(U::from((**md.vtable).clone()))),
         };
 
@@ -177,7 +182,7 @@ impl<V: ?Sized + HasDrop> SmallValue<V> {
     ///
     /// The caller must insure that the memory allocated by the returned bytes is freed.
     #[inline]
-    pub fn into_raw_parts(self) -> (MaybeUninit<usize>, TypeId, Ptr<V>) {
+    pub fn into_raw_parts(self) -> (MaybeUninit<usize>, TypeId, usize, Ptr<V>) {
         // Inhibit drop for self.
         let mut md = ManuallyDrop::new(self);
 
@@ -187,7 +192,7 @@ impl<V: ?Sized + HasDrop> SmallValue<V> {
         let vtable = unsafe { ManuallyDrop::take(&mut md.vtable) };
         let bytes = unsafe { ManuallyDrop::take(&mut md.bytes) };
 
-        (bytes, md.type_id, vtable)
+        (bytes, md.type_id, md.alignment, vtable)
     }
 }
 
@@ -200,6 +205,7 @@ impl<V: HasDrop> BoxValue<V> {
         Value {
             bytes: ManuallyDrop::new(Bytes::box_into_box_bytes(Box::new(value))),
             type_id: TypeId::of::<T>(),
+            alignment: std::mem::align_of::<T>(),
             vtable: ManuallyDrop::new(Ptr::new(V::build_vtable())),
         }
     }
@@ -215,11 +221,13 @@ impl<V: ?Sized + HasDrop> BoxValue<V> {
     pub(crate) unsafe fn from_raw_parts(
         bytes: Box<[MaybeUninit<u8>]>,
         type_id: TypeId,
+        alignment: usize,
         vtable: Ptr<V>,
     ) -> Value<Box<[MaybeUninit<u8>]>, V> {
         Value {
             bytes: ManuallyDrop::new(bytes),
             type_id,
+            alignment,
             vtable: ManuallyDrop::new(vtable),
         }
     }
@@ -235,6 +243,7 @@ impl<V: ?Sized + HasDrop> BoxValue<V> {
         let output = Value {
             bytes: ManuallyDrop::new(unsafe { ManuallyDrop::take(&mut md.bytes) }),
             type_id: md.type_id,
+            alignment: md.alignment,
             vtable: ManuallyDrop::new(Ptr::new(U::from((**md.vtable).clone()))),
         };
 
@@ -252,7 +261,7 @@ impl<V: ?Sized + HasDrop> BoxValue<V> {
     ///
     /// The caller must insure that the memory allocated by the returned bytes is freed.
     #[inline]
-    pub fn into_raw_parts(self) -> (Box<[MaybeUninit<u8>]>, TypeId, Ptr<V>) {
+    pub fn into_raw_parts(self) -> (Box<[MaybeUninit<u8>]>, TypeId, usize, Ptr<V>) {
         // Inhibit drop for self.
         let mut md = ManuallyDrop::new(self);
 
@@ -262,16 +271,17 @@ impl<V: ?Sized + HasDrop> BoxValue<V> {
         let vtable = unsafe { ManuallyDrop::take(&mut md.vtable) };
         let bytes = unsafe { ManuallyDrop::take(&mut md.bytes) };
 
-        (bytes, md.type_id, vtable)
+        (bytes, md.type_id, md.alignment, vtable)
     }
 }
 
-impl<B: GetBytesMut, V: ?Sized + HasDrop> Value<B, V> {
+impl<B: GetBytesMut + DropAsAligned, V: ?Sized + HasDrop> Value<B, V> {
     #[inline]
     pub fn as_ref(&self) -> ValueRef<V> {
         ValueRef {
             bytes: self.bytes.get_bytes_ref(),
             type_id: self.type_id,
+            alignment: self.alignment,
             vtable: VTableRef::Ref(&self.vtable),
         }
     }
@@ -280,15 +290,16 @@ impl<B: GetBytesMut, V: ?Sized + HasDrop> Value<B, V> {
         ValueMut {
             bytes: self.bytes.get_bytes_mut(),
             type_id: self.type_id,
+            alignment: self.alignment,
             vtable: VTableRef::Ref(&self.vtable),
         }
     }
 }
 
-unsafe impl<B: GetBytesMut, V: ?Sized + HasDrop + HasSend> Send for Value<B, V> {}
-unsafe impl<B: GetBytesMut, V: ?Sized + HasDrop + HasSync> Sync for Value<B, V> {}
+unsafe impl<B: GetBytesMut + DropAsAligned, V: ?Sized + HasDrop + HasSend> Send for Value<B, V> {}
+unsafe impl<B: GetBytesMut + DropAsAligned, V: ?Sized + HasDrop + HasSync> Sync for Value<B, V> {}
 
-impl<B: GetBytesMut, V: ?Sized + HasDebug + HasDrop> fmt::Debug for Value<B, V> {
+impl<B: GetBytesMut + DropAsAligned, V: ?Sized + HasDebug + HasDrop> fmt::Debug for Value<B, V> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         unsafe { self.vtable.fmt_fn()(self.bytes.get_bytes_ref(), f) }
@@ -309,7 +320,7 @@ impl<V: ?Sized + Clone + HasClone + HasDrop> Clone for Value<Box<[MaybeUninit<u8
     }
 }
 
-impl<B: GetBytesMut, V: ?Sized + HasDrop> Drop for Value<B, V> {
+impl<B: GetBytesMut + DropAsAligned, V: ?Sized + HasDrop> Drop for Value<B, V> {
     #[inline]
     fn drop(&mut self) {
         unsafe {
@@ -317,13 +328,13 @@ impl<B: GetBytesMut, V: ?Sized + HasDrop> Drop for Value<B, V> {
             self.vtable.drop_fn()(self.bytes.get_bytes_mut());
 
             // Manually drop what we promised.
-            ManuallyDrop::drop(&mut self.bytes);
+            self.bytes.drop_as_aligned(self.alignment);
             ManuallyDrop::drop(&mut self.vtable);
         }
     }
 }
 
-impl<B: GetBytesMut, V: ?Sized + HasDrop + HasPartialEq> PartialEq for Value<B, V> {
+impl<B: GetBytesMut + DropAsAligned, V: ?Sized + HasDrop + HasPartialEq> PartialEq for Value<B, V> {
     /// # Panics
     ///
     /// This function panics if the types of the two operands don't match.
@@ -338,9 +349,9 @@ impl<B: GetBytesMut, V: ?Sized + HasDrop + HasPartialEq> PartialEq for Value<B, 
     }
 }
 
-impl<B: GetBytesMut, V: ?Sized + HasDrop + HasPartialEq> Eq for Value<B, V> {}
+impl<B: GetBytesMut + DropAsAligned, V: ?Sized + HasDrop + HasPartialEq> Eq for Value<B, V> {}
 
-impl<B: GetBytesMut, V: ?Sized + HasDrop + HasHash> Hash for Value<B, V> {
+impl<B: GetBytesMut + DropAsAligned, V: ?Sized + HasDrop + HasHash> Hash for Value<B, V> {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         unsafe {
@@ -349,7 +360,7 @@ impl<B: GetBytesMut, V: ?Sized + HasDrop + HasHash> Hash for Value<B, V> {
     }
 }
 
-impl<B: GetBytesMut, V: ?Sized + HasDrop> Value<B, V> {
+impl<B: GetBytesMut + DropAsAligned, V: ?Sized + HasDrop> Value<B, V> {
     impl_value_base!();
 }
 
@@ -450,6 +461,7 @@ where
 {
     pub(crate) bytes: &'a [MaybeUninit<u8>],
     pub(crate) type_id: TypeId,
+    pub(crate) alignment: usize,
     pub(crate) vtable: VTableRef<'a, V>,
 }
 
@@ -466,12 +478,13 @@ impl<'a, V: HasDrop> ValueRef<'a, V> {
         ValueRef {
             bytes: typed.as_bytes(),
             type_id: TypeId::of::<T>(),
+            alignment: std::mem::align_of::<T>(),
             vtable: VTableRef::Box(Box::new(V::build_vtable())),
         }
     }
 }
 
-impl<'a, B: GetBytesMut, V> From<&'a Value<B, V>> for ValueRef<'a, V>
+impl<'a, B: GetBytesMut + DropAsAligned, V> From<&'a Value<B, V>> for ValueRef<'a, V>
 where
     B: GetBytesRef,
     V: ?Sized + Clone + HasDrop,
@@ -480,6 +493,7 @@ where
         ValueRef {
             bytes: val.bytes.get_bytes_ref(),
             type_id: val.type_id,
+            alignment: val.alignment,
             vtable: Ptr::clone(&val.vtable).into(),
         }
     }
@@ -497,11 +511,13 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
     pub(crate) unsafe fn from_raw_parts(
         bytes: &'a [MaybeUninit<u8>],
         type_id: TypeId,
+        alignment: usize,
         vtable: impl Into<VTableRef<'a, V>>,
     ) -> ValueRef<'a, V> {
         ValueRef {
             bytes,
             type_id,
+            alignment,
             vtable: vtable.into(),
         }
     }
@@ -518,6 +534,7 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
         Value {
             bytes: ManuallyDrop::new(unsafe { self.vtable.as_ref().clone_fn()(&self.bytes) }),
             type_id: self.type_id,
+            alignment: self.alignment,
             vtable: ManuallyDrop::new(Ptr::from(self.vtable.as_ref().clone())),
         }
     }
@@ -543,6 +560,7 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
         Value {
             bytes: ManuallyDrop::new(bytes),
             type_id: self.type_id,
+            alignment: self.alignment,
             vtable: ManuallyDrop::new(Ptr::from(self.vtable.as_ref().clone())),
         }
     }
@@ -562,6 +580,7 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
         ValueRef {
             bytes: self.bytes,
             type_id: self.type_id,
+            alignment: self.alignment,
             vtable: VTableRef::Box(Box::new(U::from(self.vtable.take()))),
         }
     }
@@ -575,6 +594,7 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
         ValueRef {
             bytes: self.bytes,
             type_id: self.type_id,
+            alignment: self.alignment,
             vtable: VTableRef::Box(Box::new(U::from((*vtable).clone()))),
         }
     }
@@ -585,6 +605,7 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
         ValueRef {
             bytes: &*self.bytes,
             type_id: self.type_id,
+            alignment: self.alignment,
             vtable: VTableRef::Ref(self.vtable.as_ref()),
         }
     }
@@ -597,6 +618,7 @@ where
 {
     pub(crate) bytes: &'a mut [MaybeUninit<u8>],
     pub(crate) type_id: TypeId,
+    pub(crate) alignment: usize,
     pub(crate) vtable: VTableRef<'a, V>,
 }
 
@@ -612,6 +634,7 @@ impl<'a, V: HasDrop> ValueMut<'a, V> {
         ValueMut {
             bytes: typed.as_bytes_mut(),
             type_id: TypeId::of::<T>(),
+            alignment: std::mem::align_of::<T>(),
             vtable: VTableRef::Box(Box::new(V::build_vtable())),
         }
     }
@@ -629,7 +652,7 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
     }
 
     /// Moves the given value into self.
-    pub fn assign<B: GetBytesMut>(&mut self, mut value: Value<B, V>) {
+    pub fn assign<B: GetBytesMut + DropAsAligned>(&mut self, mut value: Value<B, V>) {
         // Swapping the values ensures that `value` will not be dropped, but the overwritten value
         // in self will.
         self.swap(&mut value.as_mut())
@@ -673,6 +696,7 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
         Value {
             bytes: ManuallyDrop::new(unsafe { self.vtable.as_ref().clone_fn()(&self.bytes) }),
             type_id: self.type_id,
+            alignment: self.alignment,
             vtable: ManuallyDrop::new(Ptr::from(self.vtable.as_ref().clone())),
         }
     }
@@ -698,6 +722,7 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
         Value {
             bytes: ManuallyDrop::new(bytes),
             type_id: self.type_id,
+            alignment: self.alignment,
             vtable: ManuallyDrop::new(Ptr::from(self.vtable.as_ref().clone())),
         }
     }
@@ -711,11 +736,13 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
     pub(crate) unsafe fn from_raw_parts(
         bytes: &'a mut [MaybeUninit<u8>],
         type_id: TypeId,
+        alignment: usize,
         vtable: impl Into<VTableRef<'a, V>>,
     ) -> ValueMut<'a, V> {
         ValueMut {
             bytes,
             type_id,
+            alignment,
             vtable: vtable.into(),
         }
     }
@@ -736,6 +763,7 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
         ValueMut {
             bytes: self.bytes,
             type_id: self.type_id,
+            alignment: self.alignment,
             vtable: VTableRef::Box(Box::new(U::from(self.vtable.take()))),
         }
     }
@@ -749,6 +777,7 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
         ValueMut {
             bytes: self.bytes,
             type_id: self.type_id,
+            alignment: self.alignment,
             vtable: VTableRef::Box(Box::new(U::from((*self.vtable).clone()))),
         }
     }
@@ -758,6 +787,7 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
         ValueRef {
             bytes: self.bytes,
             type_id: self.type_id,
+            alignment: self.alignment,
             vtable: VTableRef::Ref(self.vtable.as_ref()),
         }
     }
@@ -767,6 +797,7 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
         ValueMut {
             bytes: self.bytes,
             type_id: self.type_id,
+            alignment: self.alignment,
             vtable: VTableRef::Ref(self.vtable.as_ref()),
         }
     }
@@ -782,6 +813,7 @@ impl<'a, V: HasDrop> From<ValueMut<'a, V>> for ValueRef<'a, V> {
         ValueRef {
             bytes: v.bytes,
             type_id: v.type_id,
+            alignment: v.alignment,
             vtable: v.vtable,
         }
     }
@@ -798,6 +830,7 @@ impl<'a, V: Any + Clone> From<CopyValueMut<'a, V>> for ValueMut<'a, (DropFn, V)>
         ValueMut {
             bytes: v.bytes,
             type_id: v.type_id,
+            alignment: v.alignment,
             vtable: VTableRef::Box(Box::new((drop_copy, v.vtable.take()))),
         }
     }
@@ -809,6 +842,7 @@ impl<'a, V: Any + Clone> From<CopyValueRef<'a, V>> for ValueRef<'a, (DropFn, V)>
         ValueRef {
             bytes: v.bytes,
             type_id: v.type_id,
+            alignment: v.alignment,
             vtable: VTableRef::Box(Box::new((drop_copy, v.vtable.take()))),
         }
     }

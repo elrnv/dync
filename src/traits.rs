@@ -142,13 +142,21 @@ pub trait HasDebug {
 pub unsafe trait HasSend {}
 pub unsafe trait HasSync {}
 
+#[derive(Clone)]
 pub struct DropVTable(pub DropFn);
+#[derive(Clone)]
 pub struct CloneVTable(pub DropFn, pub CloneFn, pub CloneFromFn, pub CloneIntoRawFn);
+#[derive(Clone)]
 pub struct PartialEqVTable(pub DropFn, pub EqFn);
+#[derive(Clone)]
 pub struct EqVTable(pub DropFn, pub EqFn);
+#[derive(Clone)]
 pub struct HashVTable(pub DropFn, pub HashFn);
+#[derive(Clone)]
 pub struct DebugVTable(pub DropFn, pub FmtFn);
+#[derive(Clone)]
 pub struct SendVTable(pub DropFn);
+#[derive(Clone)]
 pub struct SyncVTable(pub DropFn);
 
 // VTable implementations are needed for builtin types to work with builtin vtables

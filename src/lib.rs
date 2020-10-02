@@ -53,7 +53,7 @@ pub use slice_copy::*;
 pub use slice_drop::*;
 #[cfg(feature = "traits")]
 pub use value::*;
-pub use vec_copy::*;
+pub use vec_copy::{CopyElem, VecCopy};
 #[cfg(feature = "traits")]
 pub use vec_drop::*;
 pub use vtable::*;
@@ -85,11 +85,11 @@ macro_rules! from_dyn {
     (@owned $vec:ident < dyn $trait:path as $vtable:path>) => {{
         fn from_dyn<V: $trait>(vec: $crate::$vec<dyn $trait>) -> $crate::$vec<V> {
             unsafe {
-                let (data, size, id, vtable) = vec.into_raw_parts();
+                let (data, vtable) = vec.into_raw_parts();
                 // If vtables were shared with Rc, we would use this:
                 //let updated_vtable: std::rc::Rc<V> = vtable.downcast_rc().ok().unwrap();
                 let updated_vtable: Box<V> = vtable.downcast().ok().unwrap();
-                $vec::from_raw_parts(data, size, id, updated_vtable)
+                $vec::from_raw_parts(data, updated_vtable)
             }
         }
 
@@ -98,20 +98,20 @@ macro_rules! from_dyn {
     (@slice $slice:ident < dyn $trait:path >) => {{
         fn from_dyn<'a, V: ?Sized + HasDrop + std::any::Any>(slice: $crate::$slice<'a, V>) -> $crate::$slice<'a, $vtable> {
             unsafe {
-                let (data, size, id, vtable) = slice.into_raw_parts();
+                let (data, elem, vtable) = slice.into_raw_parts();
                 match vtable {
                     $crate::VTableRef::Ref(v) => {
                         let updated_vtable: &$vtable = v.downcast_ref().unwrap();
-                        $slice::from_raw_parts(data, size, id, updated_vtable)
+                        $slice::from_raw_parts(data, elem, updated_vtable)
                     }
                     $crate::VTableRef::Box(v) => {
                         let updated_vtable: Box<$vtable> = v.downcast().unwrap();
-                        $slice::from_raw_parts(data, size, id, updated_vtable)
+                        $slice::from_raw_parts(data, elem, updated_vtable)
                     }
                     #[cfg(feature = "shared-vtables")]
                     $crate::VTableRef::Rc(v) => {
                         let updated_vtable: std::rc::Rc<$vtable> = v.downcast().unwrap();
-                        $slice::from_raw_parts(data, size, id, updated_vtable)
+                        $slice::from_raw_parts(data, elem, updated_vtable)
                     }
                 }
             }
@@ -146,11 +146,11 @@ macro_rules! into_dyn {
     (@owned $vec:ident < dyn $trait:ident >) => {{
         fn into_dyn<V: 'static + $trait>(vec: $crate::$vec<V>) -> $crate::$vec<dyn $trait> {
             unsafe {
-                let (data, size, id, vtable) = vec.into_raw_parts();
+                let (data, vtable) = vec.into_raw_parts();
                 // If vtables were shared with Rc, we would use this:
                 //let updated_vtable: std::rc::Rc<dyn $trait> = vtable;
                 let updated_vtable: Box<dyn $trait> = vtable;
-                $vec::from_raw_parts(data, size, id, updated_vtable)
+                $vec::from_raw_parts(data, updated_vtable)
             }
         }
 
@@ -159,20 +159,20 @@ macro_rules! into_dyn {
     (@slice $slice:ident < dyn $trait:path >) => {{
         fn into_dyn<'a, V: 'static + $trait>(slice: $crate::$slice<'a, V>) -> $crate::$slice<'a, dyn $trait> {
             unsafe {
-                let (data, size, id, vtable) = slice.into_raw_parts();
+                let (data, elem, vtable) = slice.into_raw_parts();
                 match vtable {
                     $crate::VTableRef::Ref(v) => {
                         let updated_vtable: &dyn $trait = v;
-                        $slice::from_raw_parts(data, size, id, updated_vtable)
+                        $slice::from_raw_parts(data, elem, updated_vtable)
                     }
                     $crate::VTableRef::Box(v) => {
                         let updated_vtable: Box<dyn $trait> = v;
-                        $slice::from_raw_parts(data, size, id, updated_vtable)
+                        $slice::from_raw_parts(data, elem, updated_vtable)
                     }
                     #[cfg(feature = "shared-vtables")]
                     $crate::VTableRef::Rc(v) => {
                         let updated_vtable: std::rc::Rc<dyn $trait> = v;
-                        $slice::from_raw_parts(data, size, id, updated_vtable)
+                        $slice::from_raw_parts(data, elem, updated_vtable)
                     }
                 }
             }
@@ -208,11 +208,11 @@ pub(crate) trait ElementBytes {
 /// contiguous byte slices.
 pub(crate) trait ElementBytesMut: ElementBytes {
     /// Get the mutable slice of bytes representing all the elements.
-    fn bytes_mut(&mut self) -> &mut [std::mem::MaybeUninit<u8>];
+    unsafe fn bytes_mut(&mut self) -> &mut [std::mem::MaybeUninit<u8>];
 
     /// Index into a mutable slice of bytes.
     #[inline]
-    fn index_byte_slice_mut(&mut self, i: usize) -> &mut [std::mem::MaybeUninit<u8>] {
+    unsafe fn index_byte_slice_mut(&mut self, i: usize) -> &mut [std::mem::MaybeUninit<u8>] {
         let rng = self.index_byte_range(i);
         &mut self.bytes_mut()[rng]
     }
@@ -229,12 +229,17 @@ pub(crate) trait ElementBytesMut: ElementBytes {
         let r_rng = self.index_byte_range(0);
         if i < j {
             let l_rng = self.index_byte_range(i);
-            let (l, r) = self.bytes_mut().split_at_mut(element_size * j);
-            l[l_rng].swap_with_slice(&mut r[r_rng])
+            // SAFETY: it is safe to swap aligned data since we have unique access.
+            unsafe {
+                let (l, r) = self.bytes_mut().split_at_mut(element_size * j);
+                l[l_rng].swap_with_slice(&mut r[r_rng])
+            }
         } else {
             let l_rng = self.index_byte_range(j);
-            let (l, r) = self.bytes_mut().split_at_mut(element_size * i);
-            l[l_rng].swap_with_slice(&mut r[r_rng])
+            unsafe {
+                let (l, r) = self.bytes_mut().split_at_mut(element_size * i);
+                l[l_rng].swap_with_slice(&mut r[r_rng])
+            }
         }
     }
 }
