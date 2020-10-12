@@ -626,7 +626,7 @@ impl<V: ?Sized> VecCopy<V> {
             let diff = new_len - self.len();
             self.data.reserve(diff);
             for _ in 0..diff {
-                self.push_as(value.clone());
+                self.push_as(value);
             }
         } else {
             self.data.truncate(new_len);
