@@ -33,7 +33,7 @@ impl<T: crate::traits::DropBytes, V: VTable<T>> VTable<T> for (crate::traits::Dr
 ///
 /// Note we always need Drop because it's possible to clone ValueRef's contents, which need to know
 /// how to drop themselves.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum VTableRef<'a, V>
 where
     V: ?Sized,

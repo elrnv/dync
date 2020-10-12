@@ -188,7 +188,10 @@ impl<V: HasDrop> VecDrop<V> {
 impl<V: ?Sized + HasDrop> VecDrop<V> {
     /// Construct a vector with the same type as the given vector without copying its data.
     #[inline]
-    pub fn with_type_from(other: impl Into<Meta<Ptr<V>>>) -> Self {
+    pub fn with_type_from<'a>(other: impl Into<Meta<VTableRef<'a, V>>>) -> Self
+    where
+        V: Clone + 'a,
+    {
         VecDrop {
             data: ManuallyDrop::new(VecCopy::with_type_from(other.into())),
         }
@@ -768,13 +771,6 @@ impl<T: Elem, V: ?Sized + HasDrop + VTable<T>> Into<Option<Vec<T>>> for VecDrop<
     #[inline]
     fn into(self) -> Option<Vec<T>> {
         self.into_vec()
-    }
-}
-
-impl<'a, V: Clone + HasDrop> From<&'a VecDrop<V>> for Meta<Ptr<V>> {
-    #[inline]
-    fn from(v: &'a VecDrop<V>) -> Self {
-        Meta::from(&*v.data)
     }
 }
 

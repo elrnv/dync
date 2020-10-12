@@ -543,7 +543,10 @@ impl<V: ?Sized> VecCopy<V> {
     /// Construct a `VecCopy` with the same type as the given buffer without copying its data.
     #[cfg(feature = "traits")]
     #[inline]
-    pub fn with_type_from(other: impl Into<crate::meta::Meta<Ptr<V>>>) -> Self {
+    pub fn with_type_from<'a>(other: impl Into<crate::meta::Meta<VTableRef<'a, V>>>) -> Self
+    where
+        V: Clone + 'a,
+    {
         let mut other = other.into();
 
         fn new<T: 'static>(elem: &mut ElemInfo) -> VecVoid {
@@ -552,7 +555,7 @@ impl<V: ?Sized> VecCopy<V> {
 
         VecCopy {
             data: eval_align!(other.elem.alignment; new::<_>(&mut other.elem)),
-            vtable: other.vtable,
+            vtable: other.vtable.into_owned(),
         }
     }
 
@@ -826,6 +829,7 @@ impl<V: ?Sized> VecCopy<V> {
     /// # Safety
     ///
     /// The underlying type must correspond to `T`.
+    #[cfg(feature = "numeric")]
     #[inline]
     pub(crate) unsafe fn as_slice_as_unchecked<T: Any>(&self) -> &[T] {
         slice::from_raw_parts(self.data.ptr as *const T, self.len())
@@ -1107,30 +1111,32 @@ impl<V> VecCopy<V> {
     }
 }
 
-// Need CopyValueRef to store alignment info for this to work
-//impl<'a, V: Clone + ?Sized + 'a> std::iter::FromIterator<CopyValueRef<'a, V>> for VecCopy<V> {
-//    #[inline]
-//    fn from_iter<T: IntoIterator<Item = CopyValueRef<'a, V>>>(iter: T) -> Self {
-//        let mut iter = iter.into_iter();
-//        let next = iter
-//            .next()
-//            .expect("VecCopy cannot be built from an empty untyped iterator.");
-//        let mut data = Vec::with_capacity(next.size() * iter.size_hint().0);
-//        data.extend_from_slice(next.bytes);
-//        let mut buf = VecCopy {
-//            data,
-//            element_size: next.size(),
-//            element_type_id: next.value_type_id(),
-//            vtable: Ptr::new(next.vtable.take()),
-//        };
-//        buf.extend(iter);
-//        buf
-//    }
-//}
+impl<'a, V: Clone + ?Sized + 'a> std::iter::FromIterator<CopyValueRef<'a, V>> for VecCopy<V> {
+    /// Construct a `VecCopy` type from a *non-empty* iterator.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the given iterator is empty.
+    /// This is because we don't know the element types until we see one since
+    /// the types are erased in both `CopyValueRef` and `VecCopy`.
+    #[inline]
+    fn from_iter<T: IntoIterator<Item = CopyValueRef<'a, V>>>(iter: T) -> Self {
+        let mut iter = iter.into_iter();
+        let next = iter
+            .next()
+            .expect("VecCopy cannot be built from an empty untyped iterator.");
+        let mut data = Self::with_type_from(next.clone());
+        data.push(next);
+        data.extend(iter);
+        data
+    }
+}
 
 impl<'a, V: ?Sized + 'a> Extend<CopyValueRef<'a, V>> for VecCopy<V> {
     #[inline]
     fn extend<T: IntoIterator<Item = CopyValueRef<'a, V>>>(&mut self, iter: T) {
+        let iter = iter.into_iter();
+        self.reserve(iter.size_hint().0);
         for value in iter {
             assert_eq!(value.size(), self.element_size());
             assert_eq!(value.value_type_id(), self.element_type_id());
@@ -1239,171 +1245,6 @@ impl VecVoid {
         debug_assert!(i < self.len());
         self.index_byte_slice_mut(i)
     }
-
-    /*
-        /// Reserves capacity for at least `additional` more bytes to be inserted in this buffer.
-        #[inline]
-        pub fn reserve_bytes(&mut self, additional: usize) {
-            self.data.reserve(additional);
-        }
-
-        /// Get `i`'th element of the buffer by value without checking type.
-        ///
-        /// This can be used to reinterpret the internal data as a different type. Note that if the
-        /// size of the given type `T` doesn't match the size of the internal type, `i` will really
-        /// index the `i`th `T` sized chunk in the current buffer. See the implementation for details.
-        ///
-        /// # Safety
-        ///
-        /// It is assumed that that the buffer contains elements of type `T` and that `i` is strictly
-        /// less than the length of this vector, otherwise this function will cause undefined behavior.
-        #[inline]
-        pub unsafe fn get_unchecked<T: CopyElem>(&self, i: usize) -> T {
-            let ptr = self.data.as_ptr() as *const T;
-            *ptr.add(i)
-        }
-
-
-        /// Move buffer data to a vector with a given type, reinterpreting the data type as
-        /// required.
-        ///
-        /// # Safety
-        ///
-        /// The underlying data must be correctly represented by a `Vec<T>`.
-        #[inline]
-        pub unsafe fn reinterpret_into_vec<T>(self) -> Vec<T> {
-            reinterpret::reinterpret_vec(self.data)
-        }
-
-        /// Borrow buffer data and reinterpret it as a slice of a given type.
-        ///
-        /// # Safety
-        ///
-        /// The underlying data must be correctly represented by a `&[T]` when borrowed as
-        /// `&[MaybeUninit<u8>]`.
-        #[inline]
-        pub unsafe fn reinterpret_as_slice<T>(&self) -> &[T] {
-            reinterpret::reinterpret_slice(self.data.as_slice())
-        }
-
-        /// Mutably borrow buffer data and reinterpret it as a mutable slice of a given type.
-        ///
-        /// # Safety
-        ///
-        /// The underlying data must be correctly represented by a `&mut [T]` when borrowed as`&mut
-        /// [MaybeUninit<u8>]`.
-        #[inline]
-        pub unsafe fn reinterpret_as_mut_slice<T>(&mut self) -> &mut [T] {
-            reinterpret::reinterpret_mut_slice(self.data.as_mut_slice())
-        }
-
-
-    /// Borrow buffer data and iterate over reinterpreted underlying data.
-    ///
-    /// # Safety
-    ///
-    /// Each underlying element must be correctly represented by a `&T` when borrowed as
-    /// `&[MaybeUninit<u8>]`.
-    #[inline]
-    pub(crate) unsafe fn reinterpret_iter<T>(&self) -> slice::Iter<T> {
-        self.reinterpret_as_slice().iter()
-    }
-
-        /// Mutably borrow buffer data and mutably iterate over reinterpreted underlying data.
-        ///
-        /// # Safety
-        ///
-        /// Each underlying element must be correctly represented by a `&mut T` when borrowed as `&mut
-        /// [MaybeUninit<u8>]`.
-        #[inline]
-        pub unsafe fn reinterpret_iter_mut<T>(&mut self) -> slice::IterMut<T> {
-            self.reinterpret_as_mut_slice().iter_mut()
-        }
-
-        /// Peek at the internal representation of the data.
-        #[inline]
-        pub fn as_bytes(&self) -> &[MaybeUninit<u8>] {
-            self.data.as_slice()
-        }
-
-        /// Get a mutable reference to the internal data representation.
-        ///
-        /// # Safety
-        ///
-        /// This function is marked as unsafe since the returned bytes may be modified
-        /// arbitrarily, which may potentially produce malformed values.
-        #[inline]
-        pub unsafe fn as_bytes_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-            self.data.as_mut_slice()
-        }
-
-        /// Add bytes to this buffer.
-        ///
-        /// If the size of the given slice coincides with the number of bytes occupied by the
-        /// underlying element type, then these bytes are added to the underlying data buffer and a
-        /// mutable reference to the buffer is returned.
-        /// Otherwise, `None` is returned, and the buffer remains unmodified.
-        ///
-        /// # Safety
-        ///
-        /// It is assumed that that the given `bytes` slice is a valid representation of the element
-        /// types stored in this buffer. Otherwise this function will cause undefined behavior.
-        #[inline]
-        pub unsafe fn push_bytes(&mut self, bytes: &[MaybeUninit<u8>]) -> Option<&mut Self> {
-            if bytes.len() == self.element_size() {
-                self.data.extend_from_slice(bytes);
-                Some(self)
-            } else {
-                None
-            }
-        }
-
-        /// Add bytes to this buffer.
-        ///
-        /// If the size of the given slice is a multiple of the number of bytes occupied by the
-        /// underlying element type, then these bytes are added to the underlying data buffer and a
-        /// mutable reference to the buffer is returned.
-        /// Otherwise, `None` is returned and the buffer is unmodified.
-        ///
-        /// # Safety
-        ///
-        /// It is assumed that that the given `bytes` slice is a valid representation of a contiguous
-        /// collection of elements with the same type as stored in this buffer. Otherwise this function
-        /// will cause undefined behavior.
-        #[inline]
-        pub unsafe fn extend_bytes(&mut self, bytes: &[MaybeUninit<u8>]) -> Option<&mut Self> {
-            let element_size = self.element_size();
-            if bytes.len() % element_size == 0 {
-                self.data.extend_from_slice(bytes);
-                Some(self)
-            } else {
-                None
-            }
-        }
-
-        /// Move bytes to this buffer.
-        ///
-        /// If the size of the given vector is a multiple of the number of bytes occupied by the
-        /// underlying element type, then these bytes are moved to the underlying data buffer and a
-        /// mutable reference to the buffer is returned.
-        /// Otherwise, `None` is returned and both the buffer and the input vector remain unmodified.
-        ///
-        /// # Safety
-        ///
-        /// It is assumed that that the given `bytes` `Vec` is a valid representation of a contiguous
-        /// collection of elements with the same type as stored in this buffer. Otherwise this function
-        /// will cause undefined behavior.
-        #[inline]
-        pub unsafe fn append_bytes(&mut self, bytes: &mut Vec<MaybeUninit<u8>>) -> Option<&mut Self> {
-            let element_size = self.element_size();
-            if bytes.len() % element_size == 0 {
-                self.data.append(bytes);
-                Some(self)
-            } else {
-                None
-            }
-        }
-    */
 }
 
 impl ElementBytes for VecVoid {
@@ -1501,40 +1342,21 @@ mod tests {
         // Empty typed buffer.
         let a = VecUnit::with_type::<f32>();
         assert_eq!(a.len(), 0);
-        //assert_eq!(a.as_bytes().len(), 0);
         assert_eq!(a.element_type_id(), TypeId::of::<f32>());
-        //assert_eq!(a.byte_capacity(), 0); // Ensure nothing is allocated.
 
         // Empty buffer typed by the given type id.
         #[cfg(feature = "traits")]
         {
             let b = VecUnit::with_type_from(&a);
             assert_eq!(b.len(), 0);
-            //assert_eq!(b.as_bytes().len(), 0);
             assert_eq!(b.element_type_id(), TypeId::of::<f32>());
-            //assert_eq!(a.byte_capacity(), 0); // Ensure nothing is allocated.
         }
 
         // Empty typed buffer with a given capacity.
         let a = VecUnit::with_capacity::<f32>(4);
         assert_eq!(a.len(), 0);
-        //assert_eq!(a.as_bytes().len(), 0);
-        //assert_eq!(a.byte_capacity(), 4 * size_of::<f32>());
         assert_eq!(a.element_type_id(), TypeId::of::<f32>());
     }
-
-    /*
-    /// Test reserving capacity after creation.
-    #[test]
-    fn reserve_bytes() {
-        let mut a = VecUnit::with_type::<f32>();
-        assert_eq!(a.byte_capacity(), 0);
-        a.reserve_bytes(10);
-        assert_eq!(a.len(), 0);
-        assert_eq!(a.as_bytes().len(), 0);
-        assert!(a.byte_capacity() >= 10);
-    }
-    */
 
     /// Test resizing a buffer.
     #[test]
@@ -1545,7 +1367,6 @@ mod tests {
         a.resize(3, 1.0f32);
 
         assert_eq!(a.len(), 3);
-        //assert_eq!(a.as_bytes().len(), 12);
         for i in 0..3 {
             assert_eq!(a.get_as::<f32>(i).unwrap(), 1.0f32);
         }
@@ -1554,7 +1375,6 @@ mod tests {
         a.resize(2, 1.0f32);
 
         assert_eq!(a.len(), 2);
-        //assert_eq!(a.as_bytes().len(), 8);
         for i in 0..2 {
             assert_eq!(a.get_as::<f32>(i).unwrap(), 1.0f32);
         }
@@ -1746,31 +1566,6 @@ mod tests {
         for (i, &val) in buf.iter_as::<u8>().unwrap().enumerate() {
             assert_eq!(val, vec_u8[i]);
         }
-
-        // Check unsafe functions:
-        /*
-            unsafe {
-                // TODO: feature gate these two tests for little endian platforms.
-                // Check iterating over data with a larger size than input.
-                let vec_u32 = vec![17_040_129u32, 545_260_546]; // little endian
-                let buf = VecUnit::from(vec_u8.clone()); // Convert into buffer
-                for (i, &val) in buf.reinterpret_iter::<u32>().enumerate() {
-                    assert_eq!(val, vec_u32[i]);
-                }
-
-                // Check iterating over data with a smaller size than input
-                let mut buf2 = VecUnit::from(vec_u32); // Convert into buffer
-                for (i, &val) in buf2.reinterpret_iter::<u8>().enumerate() {
-                    assert_eq!(val, vec_u8[i]);
-                }
-
-                // Check mut iterator
-                buf2.reinterpret_iter_mut::<u8>().for_each(|val| *val += 1);
-
-                let u8_check_vec = vec![2u8, 4, 5, 2, 3, 5, 129, 33];
-                assert_eq!(buf2.reinterpret_into_vec::<u8>(), u8_check_vec);
-            }
-        */
     }
 
     #[test]
@@ -1800,22 +1595,6 @@ mod tests {
         assert!(buf.get_mut_as::<i32>(2).is_none());
     }
 
-    /*
-    /// Test iterating over chunks of data without having to interpret them.
-    #[test]
-    fn byte_chunks_test() {
-        let vec_f32 = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
-        let buf = VecUnit::from(vec_f32.clone()); // Convert into buffer
-
-        for (i, val) in buf.byte_chunks().enumerate() {
-            assert_eq!(
-                unsafe { reinterpret::reinterpret_slice::<_, f32>(val)[0] },
-                vec_f32[i]
-            );
-        }
-    }
-    */
-
     /// Test pushing values and bytes to a buffer.
     #[test]
     fn push_test() {
@@ -1838,40 +1617,43 @@ mod tests {
         for (i, &val) in buf.iter_as::<f32>().unwrap().enumerate() {
             assert_eq!(val, vec_f32[i]);
         }
+    }
 
-        /*
-            // Zero float is always represented by four zero bytes in IEEE format.
-            vec_f32.push(0.0);
-            vec_f32.push(0.0);
-            unsafe { buf.extend_bytes(&[MaybeUninit::new(0u8); 8]) }.unwrap();
+    /// Test iterating over chunks of data without having to interpret them.
+    #[test]
+    fn vecvoid_byte_chunks_test() {
+        let vec_f32 = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
+        let buf = VecVoid::from_vec(vec_f32.clone()); // Convert into VecVoid
 
-            for (i, &val) in buf.iter_as::<f32>().unwrap().enumerate() {
-                assert_eq!(val, vec_f32[i]);
+        for (i, val) in buf.byte_chunks().enumerate() {
+            assert_eq!(val.len(), 4);
+            // SAFETY: This is safe since the underlying bytes were initialized.
+            // This also will not cause issues on different platforms since
+            // conversion to and from bytes is happening on the same platform.
+            unsafe {
+                assert_eq!(*(val.as_ptr() as *const f32), vec_f32[i]);
             }
-        */
+        }
+    }
 
-        /*
-            // Test byte getters
-            for i in 5..7 {
-                assert_eq!(
-                    unsafe { std::mem::transmute::<_, &[u8]>(buf.get_bytes(i)) },
-                    &[0u8; 4][..]
-                );
-                assert_eq!(
-                    unsafe { std::mem::transmute::<_, &mut [u8]>(buf.get_bytes_mut(i)) },
-                    &[0u8; 4][..]
-                );
-            }
-        */
+    /// Check the byte getters on `VecVoid`.
+    #[test]
+    fn vecvoid_byte_getters() {
+        let vec_u8 = vec![1, 2, 3, 4];
+        let mut buf = VecVoid::from_vec(vec_u8.clone()); // Convert into VecVoid
 
-        /*
-            vec_f32.push(0.0);
-            unsafe { buf.push_bytes(&[MaybeUninit::new(0); 4][..]) }.unwrap();
-
-            for (i, &val) in buf.iter_as::<f32>().unwrap().enumerate() {
-                assert_eq!(val, vec_f32[i]);
-            }
-        */
+        // Test byte getters
+        // SAFETY: since all bytes have been initialized, this is safe.
+        for i in 0..4 {
+            assert_eq!(
+                unsafe { std::mem::transmute::<_, &[u8]>(buf.get_bytes(i)) },
+                &[vec_u8[i]][..]
+            );
+            assert_eq!(
+                unsafe { std::mem::transmute::<_, &mut [u8]>(buf.get_bytes_mut(i)) },
+                &[vec_u8[i]][..]
+            );
+        }
     }
 
     /// Test appending to a data buffer from another data buffer.
@@ -1891,41 +1673,17 @@ mod tests {
         }
     }
 
-    /*
-    /// Test appending to a data buffer from other slices and vectors.
+    /// Test that `VecCopy` can be extended by or constructed from an iterator.
     #[test]
-    fn extend_append_bytes_test() {
-        let mut buf = VecUnit::with_type::<f32>(); // Create an empty buffer.
+    fn extend_and_collect() {
+        let mut buf = VecUnit::with_type::<f32>();
+        let other = VecUnit::from(vec![1.0_f32, 23.0, 0.01]);
+        buf.extend(other.iter());
 
-        // Append an ordianry vector of data.
-        let vec_f32 = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
-        let mut vec_bytes: Vec<MaybeUninit<u8>> =
-            unsafe { reinterpret::reinterpret_vec(vec_f32.clone()) };
-        unsafe { buf.append_bytes(&mut vec_bytes) };
+        let buf2: VecUnit = other.iter().collect();
 
-        for (i, &val) in buf.iter_as::<f32>().unwrap().enumerate() {
-            assert_eq!(val, vec_f32[i]);
-        }
-
-        buf.clear();
-        assert_eq!(buf.len(), 0);
-
-        // Append a temporary vec.
-        unsafe { buf.append_bytes(&mut vec![MaybeUninit::new(0u8); 4]) };
-        assert_eq!(buf.get_as::<f32>(0).unwrap(), 0.0f32);
-
-        buf.clear();
-        assert_eq!(buf.len(), 0);
-
-        // Extend buffer with a slice
-        let slice_bytes: &[MaybeUninit<u8>] = unsafe { reinterpret::reinterpret_slice(&vec_f32) };
-        unsafe { buf.extend_bytes(slice_bytes) };
-
-        for (i, &val) in buf.iter_as::<f32>().unwrap().enumerate() {
-            assert_eq!(val, vec_f32[i]);
-        }
+        assert_eq!(buf.as_slice_as::<f32>(), buf2.as_slice_as::<f32>());
     }
-    */
 
     /// Test dynamically sized vtables.
     #[cfg(feature = "traits")]

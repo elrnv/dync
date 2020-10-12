@@ -17,7 +17,6 @@ pub mod macros;
 mod copy_value;
 mod vtable;
 
-#[cfg(feature = "traits")]
 mod meta;
 
 #[cfg(feature = "traits")]
