@@ -75,7 +75,7 @@ for value_ref in vec.iter() {
 }
 ```
 
-See the [`exmaples`](/tree/master/examples) directory for more.
+See the [`exmaples`](/examples) directory for more.
 
 # License
 
