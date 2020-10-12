@@ -12,49 +12,8 @@ This crate aims to fill the gap in Rust's dynamic traits system by exposing the 
 virtual function tables to the user in a safe API. This library is in prototype stage and is not
 recommended for production use.
 
-Below is an incomplete list of capabilities unlocked by `dync`.
-
-- Create homogeneous untyped `Vec`s that store a single virtual function table for all contained
-  elements:
-  ```rust
-  use dync::VecDrop;
-  // Create an untyped `Vec`.
-  let vec: VecDrop = vec![1_i32,2,3,4].into();
-  // Access elements either by downcasting to the underlying type.
-  for value_ref in vec.iter() {
-      let int = value_ref.downcast::<i32>().unwrap();
-      println!("{}", int);
-  }
-  // Or downcast the iterator directly for more efficient traversal.
-  for int in vec.iter_as::<i32>().unwrap() {
-      println!("{}", int);
-  }
-  ```
-
-  The `VecDrop` type above defaults to the empty virtual table (with the exception of the drop
-  function), which is not terribly useful when the contained values need to be processed in
-  some way.  `dync` provides support for common standard library traits such as:
-  - `Drop`
-  - `Clone`
-  - `PartialEq`
-  - `std::hash::Hash`
-  - `std::fmt::Debug`
-  - `Send` and `Sync`
-  - more to come
-
-  So to produce a `VecDrop` of a printable type, we could instead do
-  ```
-  use dync::{VecDrop, traits::DebugVTable};
-  // Create an untyped `Vec` of `std::fmt::Debug` types.
-  let vec: VecDrop<DebugVTable> = vec![1_i32,2,3,4].into();
-  // We can now iterate and print value references (which inherit the VTable from the container)
-  // without needing a downcast.
-  for value_ref in vec.iter() {
-      println!("{:?}", value_ref);
-  }
-  ```
-
-- More to come...
+Currently only untyped `Vec`s and `Slice`s are implemented. Complementary `Value` types
+are provided for compatibility with traditional, typed containers like `VecDeque`s and `HashMap`s.
 
 Notably `dync` introduces the following types:
  - `VecCopy<V>` - a homogeneous collection of `Copy` types generic over the virtual function table, 
@@ -72,6 +31,51 @@ function pointer, which makes them simpler and potentially more performant. Howe
 have not revealed any performance advantages in the `Copy` variants, so it is recommended to always
 use the `Drop` variants by default. Furthermore the `Copy` variants may be deprecated in the future to
 simplify the API.
+
+
+# Examples
+
+Create homogeneous untyped `Vec`s that store a single virtual function table for all contained
+elements:
+```rust
+use dync::VecDrop;
+// Create an untyped `Vec`.
+let vec: VecDrop = vec![1_i32,2,3,4].into();
+// Access elements either by downcasting to the underlying type.
+for value_ref in vec.iter() {
+    let int = value_ref.downcast::<i32>().unwrap();
+    println!("{}", int);
+}
+// Or downcast the iterator directly for more efficient traversal.
+for int in vec.iter_as::<i32>().unwrap() {
+    println!("{}", int);
+}
+```
+
+The `VecDrop` type above defaults to the empty virtual table (with the exception of the drop
+function), which is not terribly useful when the contained values need to be processed in
+some way.  `dync` provides support for common standard library traits such as:
+- `Drop`
+- `Clone`
+- `PartialEq`
+- `std::hash::Hash`
+- `std::fmt::Debug`
+- `Send` and `Sync`
+- more to come
+
+So to produce a `VecDrop` of a printable type, we could instead do
+```rust
+use dync::{VecDrop, traits::DebugVTable};
+// Create an untyped `Vec` of `std::fmt::Debug` types.
+let vec: VecDrop<DebugVTable> = vec![1_i32,2,3,4].into();
+// We can now iterate and print value references (which inherit the VTable from the container)
+// without needing a downcast.
+for value_ref in vec.iter() {
+    println!("{:?}", value_ref);
+}
+```
+
+See the [`exmaples`](/tree/master/examples) directory for more.
 
 # License
 

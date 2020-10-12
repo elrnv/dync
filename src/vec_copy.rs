@@ -283,6 +283,7 @@ impl VecVoid {
     }
 
     /// Resize this `VecVoid` using a given per element initializer.
+    #[cfg(feature = "traits")]
     #[inline]
     pub(crate) unsafe fn resize_with<I>(&mut self, len: usize, init: I)
     where
@@ -541,7 +542,6 @@ impl<V> VecCopy<V> {
 
 impl<V: ?Sized> VecCopy<V> {
     /// Construct a `VecCopy` with the same type as the given buffer without copying its data.
-    #[cfg(feature = "traits")]
     #[inline]
     pub fn with_type_from<'a>(other: impl Into<crate::meta::Meta<VTableRef<'a, V>>>) -> Self
     where

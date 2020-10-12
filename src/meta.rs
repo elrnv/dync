@@ -1,6 +1,8 @@
 use crate::copy_value::*;
 use crate::slice_copy::*;
+#[cfg(feature = "traits")]
 use crate::slice_drop::*;
+#[cfg(feature = "traits")]
 use crate::value::*;
 use crate::vec_copy::*;
 use crate::vtable::*;
@@ -81,6 +83,7 @@ impl<'a, V> From<SliceCopyMut<'a, V>> for Meta<VTableRef<'a, V>> {
     }
 }
 
+#[cfg(feature = "traits")]
 impl<'a, V> From<SliceDrop<'a, V>> for Meta<VTableRef<'a, V>> {
     #[inline]
     fn from(slice: SliceDrop<'a, V>) -> Self {
@@ -88,6 +91,7 @@ impl<'a, V> From<SliceDrop<'a, V>> for Meta<VTableRef<'a, V>> {
     }
 }
 
+#[cfg(feature = "traits")]
 impl<'a, V> From<SliceDropMut<'a, V>> for Meta<VTableRef<'a, V>> {
     #[inline]
     fn from(slice: SliceDropMut<'a, V>) -> Self {
