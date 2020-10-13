@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::copy_value::*;
+use crate::elem::ElemInfo;
 use crate::index_slice::*;
-use crate::vec_copy::ElemInfo;
 use crate::vtable::*;
 use crate::CopyElem;
 use crate::{ElementBytes, ElementBytesMut};

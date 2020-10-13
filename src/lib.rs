@@ -6,13 +6,15 @@
 //!
 //! - Create homogeneous untyped `Vec`s that store a single virtual function table for all contained
 //!   elements. This functionality is enabled by the `traits` feature. For more details see
-//!   [`vec_drop`].
+//!   [`vec_dyn`].
 //!
-//! [`vec_drop`]: vec_drop/index.html
+//! [`vec_dyn`]: vec_dyn/index.html
 
 mod bytes;
 pub mod macros;
 
+#[macro_use]
+mod elem;
 #[macro_use]
 mod copy_value;
 mod vtable;
@@ -27,15 +29,16 @@ pub mod traits;
 mod value;
 
 pub mod index_slice;
+mod vec_void;
 
 mod slice_copy;
 mod vec_copy;
 
 #[cfg(feature = "traits")]
-mod slice_drop;
+mod slice;
 
 #[cfg(feature = "traits")]
-mod vec_drop;
+mod vec_dyn;
 
 #[cfg(feature = "traits")]
 pub use crate::meta::*;
@@ -46,15 +49,16 @@ pub use downcast_rs as downcast;
 pub use dync_derive::dync_mod;
 #[cfg(feature = "traits")]
 pub use dync_derive::dync_trait;
+pub use elem::CopyElem;
 pub use index_slice::*;
+#[cfg(feature = "traits")]
+pub use slice::*;
 pub use slice_copy::*;
 #[cfg(feature = "traits")]
-pub use slice_drop::*;
-#[cfg(feature = "traits")]
 pub use value::*;
-pub use vec_copy::{CopyElem, VecCopy};
+pub use vec_copy::VecCopy;
 #[cfg(feature = "traits")]
-pub use vec_drop::*;
+pub use vec_dyn::*;
 pub use vtable::*;
 
 /// Convert a given container with a dynamic vtable to a concrete type.
@@ -63,14 +67,14 @@ pub use vtable::*;
 #[cfg(feature = "traits")]
 #[macro_export]
 macro_rules! from_dyn {
-    (SliceDrop < dyn $trait:path as $vtable:path >) => {{
-        from_dyn![@slice SliceDrop < dyn $trait as $vtable >]
+    (Slice < dyn $trait:path as $vtable:path >) => {{
+        from_dyn![@slice Slice < dyn $trait as $vtable >]
     }};
-    (SliceDropMut < dyn $trait:path as $vtable:path >) => {{
-        from_dyn![@slice SliceDropMut < dyn $trait as $vtable >]
+    (SliceMut < dyn $trait:path as $vtable:path >) => {{
+        from_dyn![@slice SliceMut < dyn $trait as $vtable >]
     }};
-    (VecDrop < dyn $trait:path as $vtable:path >) => {{
-        from_dyn![@owned VecDrop < dyn $trait as $vtable >]
+    (VecDyn < dyn $trait:path as $vtable:path >) => {{
+        from_dyn![@owned VecDyn < dyn $trait as $vtable >]
     }};
     (SliceCopy < dyn $trait:path as $vtable:path >) => {{
         from_dyn![@slice SliceCopy < dyn $trait as $vtable >]
@@ -124,14 +128,14 @@ macro_rules! from_dyn {
 #[cfg(feature = "traits")]
 #[macro_export]
 macro_rules! into_dyn {
-    (SliceDrop < dyn $trait:path >) => {{
-        into_dyn![@slice SliceDrop < dyn $trait >]
+    (Slice < dyn $trait:path >) => {{
+        into_dyn![@slice Slice < dyn $trait >]
     }};
-    (SliceDropMut < dyn $trait:ident >) => {{
-        into_dyn![@slice SliceDropMut < dyn $trait >]
+    (SliceMut < dyn $trait:ident >) => {{
+        into_dyn![@slice SliceMut < dyn $trait >]
     }};
-    (VecDrop < dyn $trait:ident >) => {{
-        into_dyn![@owned VecDrop < dyn $trait >]
+    (VecDyn < dyn $trait:ident >) => {{
+        into_dyn![@owned VecDyn < dyn $trait >]
     }};
     (SliceCopy < dyn $trait:ident >) => {{
         into_dyn![@slice SliceCopy < dyn $trait >]

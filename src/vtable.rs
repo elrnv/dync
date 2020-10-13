@@ -107,3 +107,19 @@ impl<'a, V: ?Sized> AsRef<V> for VTableRef<'a, V> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn box_vtable() {
+        let v = Box::new(());
+        let from_box = VTableRef::from(v.clone());
+        let box_vtable = VTableRef::Box(v);
+        assert_eq!(&from_box, &box_vtable);
+
+        assert_eq!(from_box.into_owned(), Box::new(()));
+        assert_eq!(box_vtable.take(), ());
+    }
+}

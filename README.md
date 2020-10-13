@@ -17,20 +17,21 @@ are provided for compatibility with traditional, typed containers like `VecDeque
 
 Notably `dync` introduces the following types:
  - `VecCopy<V>` - a homogeneous collection of `Copy` types generic over the virtual function table, 
- - `VecDrop<V>` - a homogeneous collection generic over the virtual function table, 
+ - `VecDyn<V>` - a homogeneous collection generic over the virtual function table, 
  - `SliceCopy<V>` (and `SliceCopyMut<V>`) - a homogeneous slice (and mutable slice) of `Copy` types generic over the virtual function table, 
- - `SliceDrop<V>` (and `SliceDropMut<V>`) - a homogeneous slice (and mutable slice) of types generic over the virtual function table, 
+ - `Slice<V>` (and `SliceMut<V>`) - a homogeneous slice (and mutable slice) of types generic over the virtual function table, 
  - `BoxValue<V>` - an untyped boxed value of any size.
  - `SmallValue<V>` - an untyped value that fits into a `usize`.
  - `ValueRef<V>` (and `ValueMut<V>`) - an untyped value reference (and mutable reference).
  - `CopyValueRef<V>` (and `CopyValueMut<V>`) - an untyped value reference (and mutable reference) of
    a `Copy` type.
 
-The main difference between the `Copy` variants of these is that they do not require a designated drop
-function pointer, which makes them simpler and potentially more performant. However, the benchmarks
-have not revealed any performance advantages in the `Copy` variants, so it is recommended to always
-use the `Drop` variants by default. Furthermore the `Copy` variants may be deprecated in the future to
-simplify the API.
+The main difference between the `Copy` variants of these is that they do not require a designated
+drop function pointer, which makes them simpler and potentially more performant. However, the
+benchmarks have not revealed any performance advantages in the `Copy` variants, so it is recommended
+to always use the fully dynamic variants (e.g. `VecDyn` instead of `VecCopy` and `Slice` instead of
+`SliceCopy`) by default. Furthermore the `Copy` variants may be deprecated in the future to simplify
+the API.
 
 
 # Examples
@@ -38,7 +39,7 @@ simplify the API.
 Create homogeneous untyped `Vec`s that store a single virtual function table for all contained
 elements:
 ```rust
-use dync::VecDrop;
+use dync::VecDrop; // VecDyn<DropVTable>
 // Create an untyped `Vec`.
 let vec: VecDrop = vec![1_i32,2,3,4].into();
 // Access elements either by downcasting to the underlying type.
@@ -63,11 +64,11 @@ some way.  `dync` provides support for common standard library traits such as:
 - `Send` and `Sync`
 - more to come
 
-So to produce a `VecDrop` of a printable type, we could instead do
+So to produce a `VecDyn` of a printable type, we could instead do
 ```rust
-use dync::{VecDrop, traits::DebugVTable};
+use dync::{VecDyn, traits::DebugVTable};
 // Create an untyped `Vec` of `std::fmt::Debug` types.
-let vec: VecDrop<DebugVTable> = vec![1_i32,2,3,4].into();
+let vec: VecDyn<DebugVTable> = vec![1_i32,2,3,4].into();
 // We can now iterate and print value references (which inherit the VTable from the container)
 // without needing a downcast.
 for value_ref in vec.iter() {

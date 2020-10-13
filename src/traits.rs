@@ -166,6 +166,47 @@ impl<T: DropBytes> VTable<T> for DropVTable {
     }
 }
 
+impl<T: DropBytes + CloneBytes> VTable<T> for CloneVTable {
+    fn build_vtable() -> Self {
+        CloneVTable(
+            T::drop_bytes,
+            T::clone_bytes,
+            T::clone_from_bytes,
+            T::clone_into_raw_bytes,
+        )
+    }
+}
+
+impl<T: DropBytes + PartialEqBytes> VTable<T> for PartialEqVTable {
+    fn build_vtable() -> Self {
+        PartialEqVTable(T::drop_bytes, T::eq_bytes)
+    }
+}
+
+impl<T: DropBytes + PartialEqBytes> VTable<T> for EqVTable {
+    fn build_vtable() -> Self {
+        EqVTable(T::drop_bytes, T::eq_bytes)
+    }
+}
+
+impl<T: DropBytes + HashBytes> VTable<T> for HashVTable {
+    fn build_vtable() -> Self {
+        HashVTable(T::drop_bytes, T::hash_bytes)
+    }
+}
+
+impl<T: DropBytes> VTable<T> for SendVTable {
+    fn build_vtable() -> Self {
+        SendVTable(T::drop_bytes)
+    }
+}
+
+impl<T: DropBytes> VTable<T> for SyncVTable {
+    fn build_vtable() -> Self {
+        SyncVTable(T::drop_bytes)
+    }
+}
+
 impl<T: DropBytes + DebugBytes> VTable<T> for DebugVTable {
     fn build_vtable() -> Self {
         DebugVTable(T::drop_bytes, T::fmt_bytes)
@@ -190,7 +231,9 @@ impl_has_drop!(
     PartialEqVTable,
     EqVTable,
     HashVTable,
-    DebugVTable
+    DebugVTable,
+    SendVTable,
+    SyncVTable
 );
 
 impl HasClone for CloneVTable {
@@ -228,5 +271,67 @@ impl HasEq for EqVTable {}
 impl HasDebug for DebugVTable {
     fn fmt_fn(&self) -> &FmtFn {
         &self.1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vec_dyn::VecDyn;
+
+    #[test]
+    fn drop() {
+        // Empty vec dropped
+        let vd = VecDyn::<DropVTable>::with_type::<u32>();
+        let v = vd.into_vec::<u32>().unwrap();
+        assert_eq!(v, Vec::new());
+
+        // Non-empty vec dropped
+        let vd = VecDyn::<DropVTable>::from(vec![1u32, 2]);
+        let v = vd.into_vec::<u32>().unwrap();
+        assert_eq!(v, vec![1u32, 2]);
+    }
+
+    #[test]
+    fn clone() {
+        let v = VecDyn::<CloneVTable>::from(vec![1u32, 2]);
+        let v_clone = v.clone();
+        assert_eq!(
+            v.into_vec::<u32>().unwrap(),
+            v_clone.into_vec::<u32>().unwrap()
+        );
+    }
+
+    #[test]
+    fn partial_eq() {
+        let a = VecDyn::<PartialEqVTable>::from(vec![1, 2]);
+        let b = VecDyn::<PartialEqVTable>::from(vec![1, 2]);
+        assert!(a == b);
+
+        let a = VecDyn::<EqVTable>::from(vec![1, 2]);
+        let b = VecDyn::<EqVTable>::from(vec![1, 2]);
+        assert!(a == b);
+    }
+
+    #[test]
+    fn hash() {
+        use std::collections::hash_map::DefaultHasher;
+        let a = VecDyn::<HashVTable>::from(vec![1, 2]);
+        let b = VecDyn::<HashVTable>::from(vec![1, 2]);
+
+        let mut s = DefaultHasher::new();
+        a.hash(&mut s);
+        let a_hash = s.finish();
+
+        let mut s = DefaultHasher::new();
+        b.hash(&mut s);
+        let b_hash = s.finish();
+        assert_eq!(a_hash, b_hash);
+    }
+
+    #[test]
+    fn debug() {
+        let a = VecDyn::<DebugVTable>::from(vec![1, 2]);
+        eprintln!("{:?}", a);
     }
 }

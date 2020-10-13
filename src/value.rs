@@ -911,69 +911,14 @@ mod tests {
         let val = SmallValue::<ValVTable>::new(Rc::new(1u8));
         assert_eq!(&val, &val.clone());
     }
-}
 
-/*
- * TESTING
- */
-
-/*
-#[derive(Clone, Debug)]
-pub(crate) enum VTableRef2<'a, V> {
-    Ref(&'a V),
-    Box(Box<V>),
-    Rc(Rc<V>),
-}
-
-impl<'a, V> From<&'a V> for VTableRef2<'a, V> {
-    #[inline]
-    fn from(v: &'a V) -> VTableRef2<'a, V> {
-        VTableRef2::Ref(v)
+    // Test that we can convert from a copy value to a regular value.
+    #[test]
+    fn copy_value_to_value_convert() {
+        // make a vector and get a reference value from it.
+        let v = crate::vec_copy::VecCopy::from(vec![1u32, 2, 3]);
+        let copy_val = v.get_ref(1);
+        let val: ValueRef<(DropFn, ())> = copy_val.into();
+        assert_eq!(val.downcast::<u32>().unwrap(), &2u32);
     }
 }
-
-impl<'a, V> From<Box<V>> for VTableRef2<'a, V> {
-    #[inline]
-    fn from(v: Box<V>) -> VTableRef2<'a, V> {
-        VTableRef2::Box(v)
-    }
-}
-
-impl<'a, V> AsRef<V> for VTableRef2<'a, V> {
-    #[inline]
-    fn as_ref(&self) -> &V {
-        match self {
-            VTableRef2::Ref(v) => v,
-            VTableRef2::Box(v) => &*v,
-            VTableRef2::Rc(_) => unreachable!(),//&*v,
-        }
-    }
-}
-#[derive(Debug)]
-pub struct CopyValueMutTest<'a, V> {
-    pub(crate) bytes: &'a mut [u8],
-    pub(crate) type_id: TypeId,
-    pub(crate) vtable: VTableRef2<'a, V>,
-}
-
-impl<'a, V> CopyValueMutTest<'a, V> {
-    impl_value_base!();
-
-    /// Create a new `CopyValueMutTest` from a slice of bytes and an associated `TypeId`.
-    ///
-    /// # Safety
-    ///
-    /// The given bytes must be the correct representation of the type given `TypeId`.
-    #[inline]
-    pub(crate) unsafe fn from_raw_parts(bytes: &'a mut [u8], type_id: TypeId, vtable: impl Into<VTableRef2<'a, V>>) -> CopyValueMutTest<'a, V> {
-        CopyValueMutTest { bytes, type_id, vtable: vtable.into() }
-    }
-
-    /// Downcast this value reference into a borrowed `T` type. Return `None` if the downcast fails.
-    #[inline]
-    pub fn downcast<T: Elem>(self) -> Option<&'a mut T> {
-        // This is safe since we check that self.bytes represent a `T`.
-        self.downcast_with::<T, _, _>(|b| unsafe { Bytes::from_bytes_mut(b.bytes) })
-    }
-}
-*/

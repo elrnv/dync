@@ -1,14 +1,15 @@
 use std::{
     any::{Any, TypeId},
+    fmt,
     mem::MaybeUninit,
     slice,
 };
 
+use crate::elem::ElemInfo;
 use crate::index_slice::*;
 use crate::slice_copy::*;
 use crate::traits::*;
 use crate::value::*;
-use crate::vec_copy::ElemInfo;
 use crate::vtable::*;
 use crate::Elem;
 use crate::ElementBytes;
@@ -18,27 +19,43 @@ use crate::ElementBytes;
  */
 
 #[derive(Clone)]
-pub struct SliceDrop<'a, V = (DropFn, ())>
+pub struct Slice<'a, V>
 where
     V: ?Sized,
 {
     pub(crate) data: SliceCopy<'a, V>,
 }
 
-impl<'a, V: HasDrop> SliceDrop<'a, V> {
-    /// Construct a `SliceDrop` from a given typed slice by reusing the provided memory.
+pub type SliceDrop<'a> = Slice<'a, DropVTable>;
+
+impl<'a, V: ?Sized + HasDrop + HasPartialEq> PartialEq for Slice<'a, V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.iter()
+            .zip(other.iter())
+            .all(|(this, that)| this == that)
+    }
+}
+
+impl<'a, V: ?Sized + HasDrop + HasDebug> fmt::Debug for Slice<'a, V> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl<'a, V: HasDrop> Slice<'a, V> {
+    /// Construct a `Slice` from a given typed slice by reusing the provided memory.
     #[inline]
     pub fn from_slice<T: Elem>(slice: &[T]) -> Self
     where
         V: VTable<T>,
     {
-        SliceDrop {
+        Slice {
             data: unsafe { SliceCopy::from_slice_non_copy(slice) },
         }
     }
 }
 
-impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
+impl<'a, V: ?Sized + HasDrop> Slice<'a, V> {
     /// Convert this collection into its raw components.
     ///
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
@@ -49,7 +66,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
         (data, elem, vtable)
     }
 
-    /// Construct a `SliceDrop` from raw bytes and type metadata.
+    /// Construct a `Slice` from raw bytes and type metadata.
     ///
     /// # Safety
     ///
@@ -64,20 +81,20 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
         elem: ElemInfo,
         vtable: impl Into<VTableRef<'a, V>>,
     ) -> Self {
-        SliceDrop {
+        Slice {
             data: SliceCopy::from_raw_parts(data, elem, vtable),
         }
     }
 
-    /// Upcast the `SliceDrop` into a more general base `SliceDrop`.
+    /// Upcast the `Slice` into a more general base `Slice`.
     ///
     /// This function converts the underlying virtual function table into a subset of the existing
     #[inline]
-    pub fn upcast<U: From<V>>(self) -> SliceDrop<'a, U>
+    pub fn upcast<U: From<V>>(self) -> Slice<'a, U>
     where
         V: Clone,
     {
-        SliceDrop {
+        Slice {
             data: self.data.upcast(), //_with(|v: V| (v.0, U::from(v.1))),
         }
     }
@@ -98,8 +115,8 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
     ///
     /// This is equivalent to calling `subslice` with the entire range.
     #[inline]
-    pub fn reborrow(&self) -> SliceDrop<V> {
-        SliceDrop {
+    pub fn reborrow(&self) -> Slice<V> {
+        Slice {
             data: self.data.reborrow(),
         }
     }
@@ -210,16 +227,16 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
     }
 
     #[inline]
-    pub fn chunks_exact(&self, chunk_size: usize) -> impl Iterator<Item = SliceDrop<V>> {
+    pub fn chunks_exact(&self, chunk_size: usize) -> impl Iterator<Item = Slice<V>> {
         self.data
             .chunks_exact(chunk_size)
-            .map(|data| SliceDrop { data })
+            .map(|data| Slice { data })
     }
 
     #[inline]
-    pub fn split_at(&self, mid: usize) -> (SliceDrop<V>, SliceDrop<V>) {
+    pub fn split_at(&self, mid: usize) -> (Slice<V>, Slice<V>) {
         let (l, r) = self.data.split_at(mid);
-        (SliceDrop { data: l }, SliceDrop { data: r })
+        (Slice { data: l }, Slice { data: r })
     }
 
     /// Get a reference to a value stored in this container at index `i`.
@@ -240,22 +257,22 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
 
     /// Get an immutable subslice representing the given range of indices.
     #[inline]
-    pub fn subslice<I>(&self, i: I) -> SliceDrop<V>
+    pub fn subslice<I>(&self, i: I) -> Slice<V>
     where
         I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
-        SliceDrop {
+        Slice {
             data: self.data.subslice(i),
         }
     }
 
     /// Convert this slice into an immutable subslice representing the given range of indices.
     #[inline]
-    pub fn into_subslice<I>(self, i: I) -> SliceDrop<'a, V>
+    pub fn into_subslice<I>(self, i: I) -> Slice<'a, V>
     where
         I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
-        SliceDrop {
+        Slice {
             data: self.data.into_subslice(i),
         }
     }
@@ -271,7 +288,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDrop<'a, V> {
     }
 }
 
-impl<'a, V: ?Sized + HasClone + HasDrop> SliceDrop<'a, V> {
+impl<'a, V: ?Sized + HasClone + HasDrop> Slice<'a, V> {
     /// Append cloned items from this buffer to a given `Vec<T>`. Return the mutable reference
     /// `Some(vec)` if type matched the internal type and `None` otherwise.
     #[inline]
@@ -295,46 +312,63 @@ impl<'a, V: ?Sized + HasClone + HasDrop> SliceDrop<'a, V> {
     }
 }
 
-/// Convert a `&[T]` to a `SliceDrop`.
-impl<'a, T, V> From<&'a [T]> for SliceDrop<'a, V>
+/// Convert a `&[T]` to a `Slice`.
+impl<'a, T, V> From<&'a [T]> for Slice<'a, V>
 where
     T: Elem,
     V: VTable<T> + HasDrop,
 {
     #[inline]
-    fn from(s: &'a [T]) -> SliceDrop<'a, V> {
-        SliceDrop::from_slice(s)
+    fn from(s: &'a [T]) -> Slice<'a, V> {
+        Slice::from_slice(s)
     }
 }
 
-unsafe impl<'a, V: ?Sized + HasDrop + HasSend> Send for SliceDrop<'a, V> {}
-unsafe impl<'a, V: ?Sized + HasDrop + HasSync> Sync for SliceDrop<'a, V> {}
+unsafe impl<'a, V: ?Sized + HasDrop + HasSend> Send for Slice<'a, V> {}
+unsafe impl<'a, V: ?Sized + HasDrop + HasSync> Sync for Slice<'a, V> {}
 
 /*
  * Mutable Slice
  */
 
-pub struct SliceDropMut<'a, V = (DropFn, ())>
+pub struct SliceMut<'a, V>
 where
     V: ?Sized,
 {
     pub(crate) data: SliceCopyMut<'a, V>,
 }
 
-impl<'a, V: HasDrop> SliceDropMut<'a, V> {
-    /// Construct a `SliceDropMut` from a given typed slice by reusing the provided memory.
+pub type SliceMutDrop<'a> = SliceMut<'a, DropVTable>;
+
+impl<'a, V: ?Sized + HasDrop + HasPartialEq> PartialEq for SliceMut<'a, V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.reborrow()
+            .iter()
+            .zip(other.reborrow().iter())
+            .all(|(this, that)| this == that)
+    }
+}
+
+impl<'a, V: ?Sized + HasDrop + HasDebug> fmt::Debug for SliceMut<'a, V> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_list().entries(self.reborrow().iter()).finish()
+    }
+}
+
+impl<'a, V: HasDrop> SliceMut<'a, V> {
+    /// Construct a `SliceMut` from a given typed slice by reusing the provided memory.
     #[inline]
-    pub fn from_slice<T: Elem>(slice: &'a mut [T]) -> SliceDropMut<'a, V>
+    pub fn from_slice<T: Elem>(slice: &'a mut [T]) -> SliceMut<'a, V>
     where
         V: VTable<T>,
     {
-        SliceDropMut {
+        SliceMut {
             data: unsafe { SliceCopyMut::from_slice_non_copy(slice) },
         }
     }
 }
 
-impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
+impl<'a, V: ?Sized + HasDrop> SliceMut<'a, V> {
     /// Convert this collection into its raw components.
     ///
     /// This function exists mainly to enable the `into_dyn` macro until `CoerceUnsized` is
@@ -345,7 +379,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
         (data, elem, vtable)
     }
 
-    /// Construct a `SliceDropMut` from raw bytes and type metadata.
+    /// Construct a `SliceMut` from raw bytes and type metadata.
     ///
     /// # Safety
     ///
@@ -359,21 +393,21 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
         data: &'a mut [MaybeUninit<u8>],
         elem: ElemInfo,
         vtable: impl Into<VTableRef<'a, V>>,
-    ) -> SliceDropMut<'a, V> {
-        SliceDropMut {
+    ) -> SliceMut<'a, V> {
+        SliceMut {
             data: SliceCopyMut::from_raw_parts(data, elem, vtable),
         }
     }
 
-    /// Upcast the `SliceDropMut` into a more general base `SliceDropMut`.
+    /// Upcast the `SliceMut` into a more general base `SliceMut`.
     ///
     /// This function converts the underlying virtual function table into a subset of the existing
     #[inline]
-    pub fn upcast<U: From<V>>(self) -> SliceDropMut<'a, U>
+    pub fn upcast<U: From<V>>(self) -> SliceMut<'a, U>
     where
         V: Clone,
     {
-        SliceDropMut {
+        SliceMut {
             data: self.data.upcast(), //_with(|v: (DropFn, V)| (v.0, U::from(v.1))),
         }
     }
@@ -393,8 +427,8 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     ///
     /// This is equivalent to calling `subslice` with the entire range.
     #[inline]
-    pub fn reborrow(&self) -> SliceDrop<V> {
-        SliceDrop {
+    pub fn reborrow(&self) -> Slice<V> {
+        Slice {
             data: self.data.reborrow(),
         }
     }
@@ -403,8 +437,8 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     ///
     /// This is equivalent to calling `subslice_mut` with the entire range.
     #[inline]
-    pub fn reborrow_mut(&mut self) -> SliceDropMut<V> {
-        SliceDropMut {
+    pub fn reborrow_mut(&mut self) -> SliceMut<V> {
+        SliceMut {
             data: self.data.reborrow_mut(),
         }
     }
@@ -449,9 +483,9 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     ///
     /// # Examples
     /// ```
-    /// use dync::SliceDropMut;
+    /// use dync::SliceMutDrop;
     /// let mut vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
-    /// let mut buf: SliceDropMut = vec.as_mut_slice().into();
+    /// let mut buf: SliceMutDrop = vec.as_mut_slice().into();
     /// for val in buf.iter_as::<f32>().unwrap() {
     ///     *val += 1.0_f32;
     /// }
@@ -461,7 +495,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
         self.as_slice::<T>().map(|x| x.iter_mut())
     }
 
-    /// Convert this `SliceDropMut` into a typed slice.
+    /// Convert this `SliceMut` into a typed slice.
     /// Returs `None` if the given type `T` doesn't match the internal.
     #[inline]
     pub fn as_slice<T: Any>(&mut self) -> Option<&mut [T]> {
@@ -487,7 +521,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     /// ```
     /// use dync::*;
     /// let mut vec = vec![1u32,2,3,4,5];
-    /// let mut buf: SliceDropMut = vec.as_mut_slice().into();
+    /// let mut buf: SliceMutDrop = vec.as_mut_slice().into();
     /// buf.rotate_left(3);
     /// assert_eq!(buf.as_slice::<u32>().unwrap(), &[4,5,1,2,3]);
     /// ```
@@ -505,7 +539,7 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     /// ```
     /// use dync::*;
     /// let mut vec = vec![1u32,2,3,4,5];
-    /// let mut buf: SliceDropMut = vec.as_mut_slice().into();
+    /// let mut buf: SliceMutDrop = vec.as_mut_slice().into();
     /// buf.rotate_right(3);
     /// assert_eq!(buf.as_slice::<u32>().unwrap(), &[3,4,5,1,2]);
     /// ```
@@ -552,23 +586,23 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
     }
 
     #[inline]
-    pub fn chunks_exact(&self, chunk_size: usize) -> impl Iterator<Item = SliceDrop<V>> {
+    pub fn chunks_exact(&self, chunk_size: usize) -> impl Iterator<Item = Slice<V>> {
         self.data
             .chunks_exact(chunk_size)
-            .map(|data| SliceDrop { data })
+            .map(|data| Slice { data })
     }
 
     #[inline]
-    pub fn chunks_exact_mut(&mut self, chunk_size: usize) -> impl Iterator<Item = SliceDropMut<V>> {
+    pub fn chunks_exact_mut(&mut self, chunk_size: usize) -> impl Iterator<Item = SliceMut<V>> {
         self.data
             .chunks_exact_mut(chunk_size)
-            .map(|data| SliceDropMut { data })
+            .map(|data| SliceMut { data })
     }
 
     #[inline]
-    pub fn split_at(&mut self, mid: usize) -> (SliceDropMut<V>, SliceDropMut<V>) {
+    pub fn split_at(&mut self, mid: usize) -> (SliceMut<V>, SliceMut<V>) {
         let (l, r) = self.data.split_at(mid);
-        (SliceDropMut { data: l }, SliceDropMut { data: r })
+        (SliceMut { data: l }, SliceMut { data: r })
     }
 
     /// Get a reference to a value stored in this container at index `i`.
@@ -607,39 +641,39 @@ impl<'a, V: ?Sized + HasDrop> SliceDropMut<'a, V> {
 
     /// Get an immutable subslice from the given range of indices.
     #[inline]
-    pub fn subslice<I>(&self, i: I) -> SliceDrop<V>
+    pub fn subslice<I>(&self, i: I) -> Slice<V>
     where
         I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
-        SliceDrop {
+        Slice {
             data: self.data.subslice(i),
         }
     }
 
     /// Get a mutable subslice from the given range of indices.
     #[inline]
-    pub fn subslice_mut<I>(&mut self, i: I) -> SliceDropMut<V>
+    pub fn subslice_mut<I>(&mut self, i: I) -> SliceMut<V>
     where
         I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
-        SliceDropMut {
+        SliceMut {
             data: self.data.subslice_mut(i),
         }
     }
 
     /// Convert this slice into a mutable subslice from the given range of indices.
     #[inline]
-    pub fn into_subslice<I>(self, i: I) -> SliceDropMut<'a, V>
+    pub fn into_subslice<I>(self, i: I) -> SliceMut<'a, V>
     where
         I: std::slice::SliceIndex<[MaybeUninit<u8>], Output = [MaybeUninit<u8>]> + ScaleRange,
     {
-        SliceDropMut {
+        SliceMut {
             data: self.data.into_subslice(i),
         }
     }
 }
 
-impl<'a, V: HasDrop + HasClone> SliceDropMut<'a, V> {
+impl<'a, V: HasDrop + HasClone> SliceMut<'a, V> {
     /// Clone data from a given slice into the current slice.
     ///
     /// # Panics
@@ -659,7 +693,7 @@ impl<'a, V: HasDrop + HasClone> SliceDropMut<'a, V> {
         &self,
         vec: &'b mut Vec<T>,
     ) -> Option<&'b mut Vec<T>> {
-        SliceDrop::from(self).append_clone_to_vec(vec)?;
+        Slice::from(self).append_clone_to_vec(vec)?;
         Some(vec)
     }
 
@@ -674,33 +708,33 @@ impl<'a, V: HasDrop + HasClone> SliceDropMut<'a, V> {
     }
 }
 
-/// Convert a `&mut [T]` to a `SliceDropMut`.
-impl<'a, T, V> From<&'a mut [T]> for SliceDropMut<'a, V>
+/// Convert a `&mut [T]` to a `SliceMut`.
+impl<'a, T, V> From<&'a mut [T]> for SliceMut<'a, V>
 where
     T: Elem,
     V: VTable<T> + HasDrop,
 {
     #[inline]
-    fn from(s: &'a mut [T]) -> SliceDropMut<'a, V> {
-        SliceDropMut::from_slice(s)
+    fn from(s: &'a mut [T]) -> SliceMut<'a, V> {
+        SliceMut::from_slice(s)
     }
 }
 
-impl<'a, V: ?Sized> From<SliceDropMut<'a, V>> for SliceDrop<'a, V> {
+impl<'a, V: ?Sized> From<SliceMut<'a, V>> for Slice<'a, V> {
     #[inline]
-    fn from(s: SliceDropMut<'a, V>) -> SliceDrop<'a, V> {
-        SliceDrop {
+    fn from(s: SliceMut<'a, V>) -> Slice<'a, V> {
+        Slice {
             data: SliceCopy::from(s.data),
         }
     }
 }
 
-impl<'b, 'a: 'b, V: ?Sized + HasDrop> From<&'b SliceDropMut<'a, V>> for SliceDrop<'b, V> {
+impl<'b, 'a: 'b, V: ?Sized + HasDrop> From<&'b SliceMut<'a, V>> for Slice<'b, V> {
     #[inline]
-    fn from(s: &'b SliceDropMut<'a, V>) -> SliceDrop<'b, V> {
-        unsafe { SliceDrop::from_raw_parts(s.data.data, s.data.elem, s.data.vtable.as_ref()) }
+    fn from(s: &'b SliceMut<'a, V>) -> Slice<'b, V> {
+        unsafe { Slice::from_raw_parts(s.data.data, s.data.elem, s.data.vtable.as_ref()) }
     }
 }
 
-unsafe impl<'a, V: ?Sized + HasDrop + HasSend> Send for SliceDropMut<'a, V> {}
-unsafe impl<'a, V: ?Sized + HasDrop + HasSync> Sync for SliceDropMut<'a, V> {}
+unsafe impl<'a, V: ?Sized + HasDrop + HasSend> Send for SliceMut<'a, V> {}
+unsafe impl<'a, V: ?Sized + HasDrop + HasSync> Sync for SliceMut<'a, V> {}

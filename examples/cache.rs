@@ -8,7 +8,7 @@
 
 #[cfg(feature = "traits")]
 fn main() {
-    use dync::{SmallValue, VecDrop};
+    use dync::{SmallValue, VecDyn};
     use dync_derive::dync_trait;
     use std::collections::HashMap;
     use std::rc::Rc;
@@ -25,8 +25,8 @@ fn main() {
     trait HTValue: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug {}
     impl<T> HTValue for T where T: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug {}
 
-    // An alias for a VecDrop of HTValue types.
-    type VecDropCached = VecDrop<HTValueVTable>;
+    // An alias for a VecDyn of HTValue types.
+    type VecDynCached = VecDyn<HTValueVTable>;
 
     // A sample function to produce 3 large unsigned integer values given some small seed.
     fn costly_computation_int(seed: u8) -> [u128; 3] {
@@ -42,8 +42,8 @@ fn main() {
 
     let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
     {
-        let mut int_values = VecDropCached::with_type::<[u128; 3]>();
-        let mut str_values = VecDropCached::with_type::<String>();
+        let mut int_values = VecDynCached::with_type::<[u128; 3]>();
+        let mut str_values = VecDynCached::with_type::<String>();
 
         let start_time = Instant::now();
         for _ in 0..50_000 {
@@ -62,8 +62,8 @@ fn main() {
     {
         let mut cache = HashMap::<u8, SmallValue<HTValueVTable>>::new();
 
-        let mut int_values = VecDropCached::with_type::<Rc<[u128; 3]>>();
-        let mut str_values = VecDropCached::with_type::<Rc<String>>();
+        let mut int_values = VecDynCached::with_type::<Rc<[u128; 3]>>();
+        let mut str_values = VecDynCached::with_type::<Rc<String>>();
 
         let start_time = Instant::now();
         for _ in 0..50_000 {
