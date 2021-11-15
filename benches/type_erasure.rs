@@ -4,7 +4,7 @@ use std::sync::Arc;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use rand::prelude::*;
 
-use dync::{dync_trait, into_dyn, traits::HasDrop, BoxValue, VecCopy, VecDrop};
+use dync::{dync_trait, into_dyn, traits::HasDrop, BoxValue, VecCopy, VecDyn};
 
 static SEED: [u8; 32] = [3; 32];
 
@@ -54,12 +54,12 @@ fn make_random_vec_copy(n: usize) -> VecCopy {
 }
 
 #[inline]
-fn make_random_vec_drop(n: usize) -> VecDrop<DynCloneVTable> {
+fn make_random_vec_drop(n: usize) -> VecDyn<DynCloneVTable> {
     make_random_vec(n).into()
 }
 
 #[inline]
-fn make_random_vec_drop_arc(n: usize) -> VecDrop<DynCloneVTable> {
+fn make_random_vec_drop_arc(n: usize) -> VecDyn<DynCloneVTable> {
     make_random_vec_arc(n).into()
 }
 
@@ -122,7 +122,7 @@ fn vec_copy_compute<V>(v: &mut VecCopy<V>) {
 }
 
 #[inline]
-fn vec_drop_arc_compute<V: Clone + HasDrop>(v: &mut VecDrop<V>) {
+fn vec_drop_arc_compute<V: Clone + HasDrop>(v: &mut VecDyn<V>) {
     for a in v.iter_mut() {
         let a = a.downcast::<Arc<[i64; 3]>>().unwrap();
         let res = compute(a[0], a[1], a[2]);
@@ -134,7 +134,7 @@ fn vec_drop_arc_compute<V: Clone + HasDrop>(v: &mut VecDrop<V>) {
 }
 
 #[inline]
-fn vec_drop_compute<V: Clone + HasDrop>(v: &mut VecDrop<V>) {
+fn vec_drop_compute<V: Clone + HasDrop>(v: &mut VecDyn<V>) {
     for a in v.iter_mut() {
         let a = a.downcast::<[i64; 3]>().unwrap();
         let res = compute(a[0], a[1], a[2]);
@@ -145,7 +145,7 @@ fn vec_drop_compute<V: Clone + HasDrop>(v: &mut VecDrop<V>) {
 }
 
 #[inline]
-fn vec_drop_compute_by_value(v: &mut VecDrop<DynCloneVTable>) {
+fn vec_drop_compute_by_value(v: &mut VecDyn<DynCloneVTable>) {
     for mut a in v.iter_mut() {
         let val = a.clone_value();
         let mut v = val.downcast::<[i64; 3]>().unwrap();
