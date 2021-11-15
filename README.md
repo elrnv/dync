@@ -5,6 +5,7 @@ An efficient alternative to `dyn Trait` for containerized types.
 [![On crates.io](https://img.shields.io/crates/v/dync.svg)](https://crates.io/crates/dync)
 [![On docs.rs](https://docs.rs/dync/badge.svg)](https://docs.rs/dync/)
 [![Build status](https://github.com/elrnv/dync/workflows/CI/badge.svg)](https://github.com/elrnv/dync/actions?query=workflow%3ACI)
+[![Coverage (codecov)](https://codecov.io/gh/elrnv/dync/branch/master/graph/badge.svg?token=DBUlkChFgu)](https://codecov.io/gh/elrnv/dync)
 
 # Overview
 
