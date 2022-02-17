@@ -15,7 +15,9 @@ use crate::elem::*;
 pub struct VecVoid {
     /// Owned pointer.
     pub(crate) ptr: *mut (),
+    /// Vector length.
     pub(crate) len: usize,
+    /// Vector capacity.
     pub(crate) cap: usize,
     /// Information about the type of elements stored in this vector.
     pub(crate) elem: ElemInfo,

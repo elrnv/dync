@@ -79,6 +79,14 @@ for value_ref in vec.iter() {
 
 See the [`exmaples`](/examples) directory for more.
 
+# Caveats
+
+This library does not include serialization/deserialization functionality for the provided types since these would need
+to handle serializing/deserializing functions in the virtual table, which is out of the scope of this library. For
+serialization/desrialization it is recommended to simply convert untyped collections to typed collections
+(e.g. `VecDrop -> Vec<T>`).
+
+
 # License
 
 This repository is licensed under either of
