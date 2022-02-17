@@ -288,6 +288,7 @@ pub fn dync_mod(
         }
     }
 
+    // Insert new items into the current module.
     item_mod.content.as_mut().unwrap().1.append(&mut dync_items);
 
     let tokens = quote! { #item_mod };
@@ -802,7 +803,7 @@ pub fn dync_trait_method(
     item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
     let mut trait_method: TraitItemMethod = syn::parse(item).expect(
-        "the dync_trait_function attribute applies only to trait function definitions only",
+        "the dync_trait_method attribute applies to trait function definitions only",
     );
 
     trait_method.sig = dync_fn_sig(trait_method.sig);
