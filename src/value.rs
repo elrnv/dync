@@ -864,6 +864,10 @@ mod tests {
     pub trait Val: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug + 'static {}
     impl<T> Val for T where T: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug + 'static {}
 
+    #[dync_trait(dync_crate_name = "crate")]
+    pub trait Float: Clone + PartialEq + std::fmt::Debug + 'static {}
+    impl<T> Float for T where T: Clone + PartialEq + std::fmt::Debug + 'static {}
+
     #[test]
     #[should_panic]
     fn forbidden_value_compare() {
@@ -902,6 +906,15 @@ mod tests {
         assert_eq!(&a, &b);
         assert_eq!(&a, &c);
         assert_eq!(&a, &d);
+    }
+
+    #[test]
+    fn unaligned_box_value() {
+        let a = [0.0_f32; 3];
+        let a_val = BoxValue::<FloatVTable>::new(a);
+        // Cloning so a_val can be dropped, which tests a proper drop of BoxValue.
+        let b = *a_val.clone().downcast::<[f32; 3]>().unwrap();
+        assert_eq!(&a, &b);
     }
 
     // This test checks that cloning and dropping clones works correctly.
