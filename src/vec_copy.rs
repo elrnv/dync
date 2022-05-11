@@ -190,7 +190,7 @@ impl<V: ?Sized> VecCopy<V> {
         let mut other = other.into();
 
         fn new<T: 'static>(elem: &mut ElemInfo) -> VecVoid {
-            unsafe { VecVoid::from_vec_override(Vec::<T>::new(), *elem) }
+            unsafe { VecVoid::from_vec_override(Vec::<T>::with_capacity(elem.size), *elem) }
         }
 
         VecCopy {

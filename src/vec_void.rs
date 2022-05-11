@@ -44,7 +44,12 @@ impl Clone for VecVoid {
                 // Next we clone this new VecVoid. This is basically a memcpy
                 // of the internal data into a new heap block.
                 let v = ManuallyDrop::new(out.into_aligned_vec_unchecked::<T>());
-                VecVoid::from_vec_override(Vec::clone(&v), buf.elem)
+
+                // Ensure that the capacity is preserved.
+                let mut new_v = Vec::with_capacity(v.capacity());
+                new_v.clone_from(&v);
+
+                VecVoid::from_vec_override(new_v, buf.elem)
             }
         }
         eval_align!(self.elem.alignment; clone::<_>(self))
@@ -92,21 +97,29 @@ impl VecVoid {
         self.cap
     }
 
-    /// Converts a typed `Vec<T>` into a `VecVoid`.
-    ///
-    /// If the given `Vec<T>` is empty, this function allocates capacity for (at least) a single element
-    /// to ensure proper memory alignment in the future.
+    /// Converts the given `Vec<T>` into a `ManuallyDrop` version with the expected allocation
+    /// strategy.
     #[inline]
-    pub(crate) fn from_vec<T: 'static>(v: Vec<T>) -> Self {
+    fn into_valid_vec<T: 'static>(v: Vec<T>) -> ManuallyDrop<Vec<T>> {
         // IMPORTANT:
-        // When v is empty, then we can't ensure that pushing to it will keep capacity T aligned.
+        // When v has no capacity, then we can't ensure that pushing to it will keep capacity T aligned.
         // So here we push an uninitialized item to it to ensure that capacity will be properly tracked.
         // For this reason converting a Vec to VecVoid causes additional allocations if v is non-empty.
         // Not doing the reserve step below _may_ cause a panic when pushing to a VecVoid.
         let mut v = ManuallyDrop::new(v);
-        if v.is_empty() {
+        if v.capacity() == 0 {
             v.reserve(1);
         }
+        v
+    }
+
+    /// Converts a typed `Vec<T>` into a `VecVoid`.
+    ///
+    /// If the given `Vec<T>` has no capacity, this function allocates capacity for (at least) a single element
+    /// to ensure proper memory alignment in the future.
+    #[inline]
+    pub(crate) fn from_vec<T: 'static>(v: Vec<T>) -> Self {
+        let mut v = Self::into_valid_vec(v);
         VecVoid {
             ptr: v.as_mut_ptr() as *mut (),
             len: v.len(),
@@ -115,10 +128,30 @@ impl VecVoid {
         }
     }
 
+    /// Converts a typed `Vec<T>` into a `VecVoid` while oeverriding the element info of `T` with the
+    /// given element info.
+    ///
+    /// This function expects `v` to have non-zero capacity. Otherwise we cannot ensure that future
+    /// allocations will be element aligned with the original type.
+    ///
+    /// # Safety
+    ///
+    /// The given element info must be consistently sized and aligned with `T`.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the length of capacity of `v` is not a multiple of the given element size.
+    /// It also panics if the capacity of `v` is zero.
     #[inline]
     pub(crate) unsafe fn from_vec_override<T: 'static>(v: Vec<T>, elem: ElemInfo) -> Self {
+        assert_ne!(v.capacity(), 0);
+
         let mut v = ManuallyDrop::new(v);
+
         let velem = ElemInfo::new::<T>();
+
+        assert_eq!(v.len() * velem.num_bytes() % elem.num_bytes(), 0);
+
         let len = v.len() * velem.num_bytes() / elem.num_bytes();
 
         // This check ensures that capacity has been increased at the correct increment, which

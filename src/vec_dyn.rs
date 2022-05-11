@@ -1073,6 +1073,17 @@ mod tests {
         vec.push([2.0; 3]);
         let nu_vec: Vec<[f64; 3]> = buf.clone_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
+
+        // Cloned empty
+        let mut vec = Vec::new();
+        let buf = VecDynFloat::from(vec.clone());
+        // Clone below resests the capacity to 0 and follows a different codepath than the conversion
+        // above.
+        let mut buf2 = VecDynFloat::from(buf.clone());
+        buf2.push_cloned(ValueRef::new(&[2.0_f64; 3]));
+        vec.push([2.0; 3]);
+        let nu_vec: Vec<[f64; 3]> = buf2.clone_into_vec().unwrap(); // Convert back into vec
+        assert_eq!(vec, nu_vec);
     }
 
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
