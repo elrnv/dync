@@ -37,7 +37,10 @@ fn main() {
     // Another sample computation that produces random strings.
     fn costly_computation_str(seed: u8) -> String {
         let rng: StdRng = SeedableRng::from_seed([seed; 32]);
-        rng.sample_iter(&Alphanumeric).take(30).collect()
+        rng.sample_iter(&Alphanumeric)
+            .take(30)
+            .map(|x| char::from_u32(x as u32).unwrap())
+            .collect()
     }
 
     let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
