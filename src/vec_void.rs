@@ -141,24 +141,25 @@ impl VecVoid {
     /// # Panics
     ///
     /// This function panics if the length of capacity of `v` is not a multiple of the given element size.
-    /// It also panics if the capacity of `v` is zero.
+    /// It also panics if the capacity of `v` is not large enough to contain one element specified by `elem`.
     #[inline]
     pub(crate) unsafe fn from_vec_override<T: 'static>(v: Vec<T>, elem: ElemInfo) -> Self {
-        assert_ne!(v.capacity(), 0);
-
         let mut v = ManuallyDrop::new(v);
 
         let velem = ElemInfo::new::<T>();
+        assert_eq!(velem.alignment, elem.alignment);
 
-        assert_eq!(v.len() * velem.num_bytes() % elem.num_bytes(), 0);
+        assert!(v.capacity() >= elem.size);
 
-        let len = v.len() * velem.num_bytes() / elem.num_bytes();
+        assert_eq!(v.len() * velem.size % elem.size, 0);
+
+        let len = v.len() * velem.size / elem.size;
 
         // This check ensures that capacity has been increased at the correct increment, which
         // may not be true if VecVoid starts off with no capacity to begin with.
-        assert_eq!(v.capacity() * velem.num_bytes() % elem.num_bytes(), 0);
+        assert_eq!(v.capacity() * velem.size % elem.size, 0);
 
-        let cap = v.capacity() * velem.num_bytes() / elem.num_bytes();
+        let cap = v.capacity() * velem.size / elem.size;
         VecVoid {
             ptr: v.as_mut_ptr() as *mut (),
             len,

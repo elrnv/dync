@@ -214,6 +214,7 @@ impl<'a, V: ?Sized + HasDrop> Slice<'a, V> {
         })
     }
 
+    // TODO: Determine if we can instead implement IntoIterator or explain why not and silence the clippy warning.
     #[inline]
     pub fn into_iter(self) -> impl Iterator<Item = ValueRef<'a, V>>
     where
@@ -247,7 +248,7 @@ impl<'a, V: ?Sized + HasDrop> Slice<'a, V> {
         // corresponding TypeId.
         unsafe {
             ValueRef::from_raw_parts(
-                &self.index_byte_slice(i),
+                self.index_byte_slice(i),
                 self.element_type_id(),
                 self.data.elem.alignment,
                 self.data.vtable.as_ref(),
@@ -305,6 +306,8 @@ impl<'a, V: ?Sized + HasClone + HasDrop> Slice<'a, V> {
     #[inline]
     pub fn clone_into_vec<T: Elem + Clone>(&self) -> Option<Vec<T>> {
         let mut vec = Vec::new();
+        // NOTE: vec cannot be captured by closure if it's also mutably borrowed.
+        #[allow(clippy::manual_map)]
         match self.append_clone_to_vec(&mut vec) {
             Some(_) => Some(vec),
             None => None,
@@ -573,6 +576,7 @@ impl<'a, V: ?Sized + HasDrop> SliceMut<'a, V> {
             })
     }
 
+    // TODO: Determine if we can instead implement IntoIterator or explain why not and silence the clippy warning.
     #[inline]
     pub fn into_iter(self) -> impl Iterator<Item = ValueMut<'a, V>>
     where
@@ -613,7 +617,7 @@ impl<'a, V: ?Sized + HasDrop> SliceMut<'a, V> {
         // corresponding TypeId.
         unsafe {
             ValueRef::from_raw_parts(
-                &self.data.index_byte_slice(i),
+                self.data.index_byte_slice(i),
                 self.element_type_id(),
                 self.data.elem.alignment,
                 self.data.vtable.as_ref(),
@@ -701,6 +705,8 @@ impl<'a, V: HasDrop + HasClone> SliceMut<'a, V> {
     #[inline]
     pub fn clone_into_vec<T: Elem + Clone>(self) -> Option<Vec<T>> {
         let mut vec = Vec::new();
+        // NOTE: vec cannot be captured by closure if it's also mutably borrowed.
+        #[allow(clippy::manual_map)]
         match self.append_clone_to_vec(&mut vec) {
             Some(_) => Some(vec),
             None => None,

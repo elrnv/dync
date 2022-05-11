@@ -203,6 +203,8 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
     #[inline]
     pub fn copy_into_vec<T: CopyElem>(&self) -> Option<Vec<T>> {
         let mut vec = Vec::new();
+        // NOTE: vec cannot be captured by closure if it's also mutably borrowed.
+        #[allow(clippy::manual_map)]
         match self.append_copy_to_vec(&mut vec) {
             Some(_) => Some(vec),
             None => None,
@@ -257,6 +259,7 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
         })
     }
 
+    // TODO: Determine if we can instead implement IntoIterator or explain why not and silence the clippy warning.
     #[inline]
     pub fn into_iter(self) -> impl Iterator<Item = CopyValueRef<'a, V>>
     where
@@ -272,7 +275,7 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
     #[inline]
     pub fn chunks_exact(&self, chunk_size: usize) -> impl Iterator<Item = SliceCopy<V>> {
         let &SliceCopy {
-            ref data,
+            data,
             elem,
             ref vtable,
         } = self;
@@ -282,7 +285,7 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
 
     pub fn split_at(&self, mid: usize) -> (SliceCopy<V>, SliceCopy<V>) {
         let &SliceCopy {
-            ref data,
+            data,
             elem,
             ref vtable,
         } = self;
@@ -303,7 +306,7 @@ impl<'a, V: ?Sized> SliceCopy<'a, V> {
         // corresponding TypeId.
         unsafe {
             CopyValueRef::from_raw_parts(
-                &self.index_byte_slice(i),
+                self.index_byte_slice(i),
                 self.element_type_id(),
                 self.elem.alignment,
                 self.vtable.as_ref(),
@@ -356,7 +359,7 @@ impl<'a, V: ?Sized> ElementBytes for SliceCopy<'a, V> {
     }
     #[inline]
     fn bytes(&self) -> &[MaybeUninit<u8>] {
-        &self.data
+        self.data
     }
 }
 
@@ -581,6 +584,8 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
     #[inline]
     pub fn copy_into_vec<T: CopyElem>(self) -> Option<Vec<T>> {
         let mut vec = Vec::new();
+        // NOTE: vec cannot be captured by closure if it's also mutably borrowed.
+        #[allow(clippy::manual_map)]
         match self.append_copy_to_vec(&mut vec) {
             Some(_) => Some(vec),
             None => None,
@@ -662,6 +667,7 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
             })
     }
 
+    // TODO: Determine if we can instead implement IntoIterator or explain why not and silence the clippy warning.
     #[inline]
     pub fn into_iter(self) -> impl Iterator<Item = CopyValueMut<'a, V>>
     where
@@ -719,7 +725,7 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
         // corresponding TypeId.
         unsafe {
             CopyValueRef::from_raw_parts(
-                &self.index_byte_slice(i),
+                self.index_byte_slice(i),
                 self.element_type_id(),
                 self.elem.alignment,
                 self.vtable.as_ref(),
@@ -795,14 +801,14 @@ impl<'a, V: ?Sized> ElementBytes for SliceCopyMut<'a, V> {
     }
     #[inline]
     fn bytes(&self) -> &[MaybeUninit<u8>] {
-        &self.data
+        self.data
     }
 }
 
 impl<'a, V: ?Sized> ElementBytesMut for SliceCopyMut<'a, V> {
     #[inline]
     unsafe fn bytes_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        &mut self.data
+        self.data
     }
 }
 

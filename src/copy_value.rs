@@ -54,7 +54,7 @@ pub trait GetBytesMut: GetBytesRef {
     fn get_bytes_mut(&mut self) -> &mut [MaybeUninit<u8>];
 }
 
-// Bytes cannot be dropped willy-nilly. Dropping triggers deallocators, and they must know about
+// Bytes cannot be dropped willy-nilly. Dropping triggers deallocators, and they must know
 // about the size and alignment of the original allocation.
 pub trait DropAsAligned {
     fn drop_as_aligned(&mut self, alignment: usize);
@@ -77,7 +77,17 @@ impl DropAsAligned for Box<[MaybeUninit<u8>]> {
     #[inline]
     fn drop_as_aligned(&mut self, alignment: usize) {
         fn drop_bytes<T: 'static>(b: Box<[MaybeUninit<u8>]>) {
-            let _ = unsafe { Box::from_raw(Box::into_raw(b) as *mut T) };
+            // Box value is created from a Box<T> -> Box<[MaybeUninit<u8>].
+            // Here T has the right alignment but often wrong size (e.g. if original T was an array).
+            // Box<[MaybeUninit<u8>] has the right size but wrong alignment.
+            // To ensure that the right number of elements is dropped with the right alignment
+            // We need to cast to T and build a slice of the right size. Then drop that box.
+            let size = b.len() / std::mem::align_of::<T>();
+            let ptr: *mut T = Box::into_raw(b) as *mut T;
+            unsafe {
+                let slice_t = std::slice::from_raw_parts_mut(ptr, size);
+                let _ = Box::from_raw(slice_t);
+            }
         }
         eval_align!(alignment; drop_bytes::<_>(std::mem::take(self)));
     }
@@ -269,7 +279,7 @@ impl<'a, V: ?Sized> CopyValueMut<'a, V> {
     #[inline]
     pub fn swap(&mut self, other: &mut CopyValueMut<V>) {
         if self.value_type_id() == other.value_type_id() {
-            self.bytes.swap_with_slice(&mut other.bytes);
+            self.bytes.swap_with_slice(other.bytes);
             assert_eq!(self.alignment, other.alignment);
         }
     }

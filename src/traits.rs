@@ -139,7 +139,14 @@ pub trait HasDebug {
     fn fmt_fn(&self) -> &FmtFn;
 }
 
+/// # Safety
+///
+/// Implementing containers must contain types that implement `Send`.
 pub unsafe trait HasSend {}
+
+/// # Safety
+///
+/// Implementing containers must contain types that implement `Sync`.
 pub unsafe trait HasSync {}
 
 #[derive(Clone)]

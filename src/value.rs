@@ -59,29 +59,29 @@ impl<T: Any> HasDrop for (DropFn, T) {
 impl<V: HasClone> HasClone for (DropFn, V) {
     #[inline]
     fn clone_fn(&self) -> &CloneFn {
-        &self.1.clone_fn()
+        self.1.clone_fn()
     }
     #[inline]
     fn clone_from_fn(&self) -> &CloneFromFn {
-        &self.1.clone_from_fn()
+        self.1.clone_from_fn()
     }
     #[inline]
     fn clone_into_raw_fn(&self) -> &CloneIntoRawFn {
-        &self.1.clone_into_raw_fn()
+        self.1.clone_into_raw_fn()
     }
 }
 
 impl<V: HasHash> HasHash for (DropFn, V) {
     #[inline]
     fn hash_fn(&self) -> &HashFn {
-        &self.1.hash_fn()
+        self.1.hash_fn()
     }
 }
 
 impl<V: HasPartialEq> HasPartialEq for (DropFn, V) {
     #[inline]
     fn eq_fn(&self) -> &EqFn {
-        &self.1.eq_fn()
+        self.1.eq_fn()
     }
 }
 
@@ -90,7 +90,7 @@ impl<V: HasEq> HasEq for (DropFn, V) {}
 impl<V: HasDebug> HasDebug for (DropFn, V) {
     #[inline]
     fn fmt_fn(&self) -> &FmtFn {
-        &self.1.fmt_fn()
+        self.1.fmt_fn()
     }
 }
 
@@ -532,7 +532,7 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
         V: HasClone + Clone,
     {
         Value {
-            bytes: ManuallyDrop::new(unsafe { self.vtable.as_ref().clone_fn()(&self.bytes) }),
+            bytes: ManuallyDrop::new(unsafe { self.vtable.as_ref().clone_fn()(self.bytes) }),
             type_id: self.type_id,
             alignment: self.alignment,
             vtable: ManuallyDrop::new(Ptr::from(self.vtable.as_ref().clone())),
@@ -676,7 +676,7 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
                 // This function will call the appropriate typed clone_from function, which will
                 // automatically drop the previous value of self.bytes, so no manual drop call is
                 // needed here.
-                self.vtable.as_ref().clone_from_fn()(&mut self.bytes, other.bytes);
+                self.vtable.as_ref().clone_from_fn()(self.bytes, other.bytes);
             }
             Ok(())
         } else {
@@ -697,7 +697,7 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
         V: HasClone + Clone,
     {
         Value {
-            bytes: ManuallyDrop::new(unsafe { self.vtable.as_ref().clone_fn()(&self.bytes) }),
+            bytes: ManuallyDrop::new(unsafe { self.vtable.as_ref().clone_fn()(self.bytes) }),
             type_id: self.type_id,
             alignment: self.alignment,
             vtable: ManuallyDrop::new(Ptr::from(self.vtable.as_ref().clone())),

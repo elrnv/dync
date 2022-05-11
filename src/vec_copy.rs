@@ -434,6 +434,8 @@ impl<V: ?Sized> VecCopy<V> {
     #[inline]
     pub fn copy_into_vec<T: CopyElem>(&self) -> Option<Vec<T>> {
         let mut vec = Vec::new();
+        // NOTE: vec cannot be captured by closure if it's also mutably borrowed.
+        #[allow(clippy::manual_map)]
         match self.append_copy_to_vec(&mut vec) {
             Some(_) => Some(vec),
             None => None,
@@ -840,7 +842,7 @@ impl VecVoid {
     /// This avoids needing to know what type data you're dealing with. This type of iterator is
     /// useful for transferring data from one place to another for a generic buffer.
     #[inline]
-    pub fn byte_chunks<'a>(&'a self) -> impl Iterator<Item = &'a [MaybeUninit<u8>]> + 'a {
+    pub fn byte_chunks(&self) -> impl Iterator<Item = &[MaybeUninit<u8>]> + '_ {
         let chunk_size = self.elem.num_bytes();
         self.bytes().chunks_exact(chunk_size)
     }
@@ -855,9 +857,7 @@ impl VecVoid {
     /// This function is marked as unsafe since the returned bytes may be modified
     /// arbitrarily, which may potentially produce malformed values.
     #[inline]
-    pub unsafe fn byte_chunks_mut<'a>(
-        &'a mut self,
-    ) -> impl Iterator<Item = &'a mut [MaybeUninit<u8>]> + 'a {
+    pub unsafe fn byte_chunks_mut(&mut self) -> impl Iterator<Item = &mut [MaybeUninit<u8>]> + '_ {
         let chunk_size = self.elem.num_bytes();
         let slice = std::slice::from_raw_parts_mut(
             self.ptr as *mut MaybeUninit<u8>,
@@ -950,13 +950,13 @@ where
 }
 
 /// Convert a `VecCopy` to a `Option<Vec<T>>`.
-impl<T, V: ?Sized> Into<Option<Vec<T>>> for VecCopy<V>
+impl<T, V: ?Sized> From<VecCopy<V>> for Option<Vec<T>>
 where
     T: CopyElem,
 {
     #[inline]
-    fn into(self) -> Option<Vec<T>> {
-        self.into_vec()
+    fn from(v: VecCopy<V>) -> Option<Vec<T>> {
+        v.into_vec()
     }
 }
 

@@ -730,6 +730,8 @@ impl<V: ?Sized + HasDrop + HasClone> VecDyn<V> {
     #[inline]
     pub fn clone_into_vec<T: Elem + Clone>(&self) -> Option<Vec<T>> {
         let mut vec = Vec::new();
+        // NOTE: vec cannot be captured by closure if it's also mutably borrowed.
+        #[allow(clippy::manual_map)]
         match self.append_cloned_to_vec(&mut vec) {
             Some(_) => Some(vec),
             None => None,
@@ -758,10 +760,10 @@ where
 }
 
 /// Convert a buffer to a `Vec` with an option to fail.
-impl<T: Elem, V: ?Sized + HasDrop + VTable<T>> Into<Option<Vec<T>>> for VecDyn<V> {
+impl<T: Elem, V: ?Sized + HasDrop + VTable<T>> From<VecDyn<V>> for Option<Vec<T>> {
     #[inline]
-    fn into(self) -> Option<Vec<T>> {
-        self.into_vec()
+    fn from(v: VecDyn<V>) -> Option<Vec<T>> {
+        v.into_vec()
     }
 }
 
@@ -1080,6 +1082,17 @@ mod tests {
         // Clone below resests the capacity to 0 and follows a different codepath than the conversion
         // above.
         let mut buf2 = VecDynFloat::from(buf.clone());
+        buf2.push_cloned(ValueRef::new(&[2.0_f64; 3]));
+        vec.push([2.0; 3]);
+        let nu_vec: Vec<[f64; 3]> = buf2.clone_into_vec().unwrap(); // Convert back into vec
+        assert_eq!(vec, nu_vec);
+
+        // Empty from type
+        let mut vec = Vec::new();
+        let buf = VecDynFloat::from(vec.clone());
+        // Clone below resests the capacity to 0 and follows a different codepath than the conversion
+        // above.
+        let mut buf2 = VecDynFloat::with_type_from(buf.as_slice());
         buf2.push_cloned(ValueRef::new(&[2.0_f64; 3]));
         vec.push([2.0; 3]);
         let nu_vec: Vec<[f64; 3]> = buf2.clone_into_vec().unwrap(); // Convert back into vec
