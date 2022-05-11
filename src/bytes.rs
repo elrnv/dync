@@ -1,7 +1,11 @@
 //! This module deals with conversions of types between bytes.
 //! For reference on potential pitfals here are two articles:
 //! - [Safe trasmute proposal](https://internals.rust-lang.org/t/pre-rfc-safe-transmute/11347)
-//! - [Notes on Type Layouts aand ABIs in Rust](https://gankra.github.io/blah/rust-layouts-and-abis/)
+//! - [Notes on Type Layouts and ABIs in Rust](https://gankra.github.io/blah/rust-layouts-and-abis/)
+
+// Update (May 2022): This module may soon deprecate some functions in favour of native functions on `MaybeUninit`.
+// Check to see when https://doc.rust-lang.org/std/mem/union.MaybeUninit.html#method.as_bytes  is stabilized.
+
 use std::mem::size_of;
 use std::mem::MaybeUninit;
 use std::rc::Rc;

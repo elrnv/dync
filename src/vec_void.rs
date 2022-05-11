@@ -92,9 +92,21 @@ impl VecVoid {
         self.cap
     }
 
+    /// Converts a typed `Vec<T>` into a `VecVoid`.
+    ///
+    /// If the given `Vec<T>` is empty, this function allocates capacity for (at least) a single element
+    /// to ensure proper memory alignment in the future.
     #[inline]
     pub(crate) fn from_vec<T: 'static>(v: Vec<T>) -> Self {
+        // IMPORTANT:
+        // When v is empty, then we can't ensure that pushing to it will keep capacity T aligned.
+        // So here we push an uninitialized item to it to ensure that capacity will be properly tracked.
+        // For this reason converting a Vec to VecVoid causes additional allocations if v is non-empty.
+        // Not doing the reserve step below _may_ cause a panic when pushing to a VecVoid.
         let mut v = ManuallyDrop::new(v);
+        if v.is_empty() {
+            v.reserve(1);
+        }
         VecVoid {
             ptr: v.as_mut_ptr() as *mut (),
             len: v.len(),
@@ -108,6 +120,11 @@ impl VecVoid {
         let mut v = ManuallyDrop::new(v);
         let velem = ElemInfo::new::<T>();
         let len = v.len() * velem.num_bytes() / elem.num_bytes();
+
+        // This check ensures that capacity has been increased at the correct increment, which
+        // may not be true if VecVoid starts off with no capacity to begin with.
+        assert_eq!(v.capacity() * velem.num_bytes() % elem.num_bytes(), 0);
+
         let cap = v.capacity() * velem.num_bytes() / elem.num_bytes();
         VecVoid {
             ptr: v.as_mut_ptr() as *mut (),

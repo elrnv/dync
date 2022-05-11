@@ -28,19 +28,17 @@ impl Default for Config {
     }
 }
 
-#[derive(Debug)]
 struct DynAttrib {
     ident: Ident,
-    eq: Option<Token![=]>,
     value: Option<Lit>,
 }
 
 impl Parse for DynAttrib {
     fn parse(input: ParseStream) -> Result<Self> {
         let ident = input.parse()?;
-        let eq = input.parse()?;
+        let _ = input.parse::<Option<Token![=]>>()?;
         let value = input.parse()?;
-        Ok(DynAttrib { ident, eq, value })
+        Ok(DynAttrib { ident, value })
     }
 }
 

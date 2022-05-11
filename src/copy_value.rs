@@ -86,13 +86,13 @@ impl DropAsAligned for Box<[MaybeUninit<u8>]> {
 impl GetBytesRef for MaybeUninit<usize> {
     #[inline]
     fn get_bytes_ref(&self) -> &[MaybeUninit<u8>] {
-        self.as_bytes()
+        Bytes::as_bytes(self)
     }
 }
 impl GetBytesMut for MaybeUninit<usize> {
     #[inline]
     fn get_bytes_mut(&mut self) -> &mut [MaybeUninit<u8>] {
-        self.as_bytes_mut()
+        Bytes::as_bytes_mut(self)
     }
 }
 

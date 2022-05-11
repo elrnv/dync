@@ -555,7 +555,10 @@ impl<'a, V: ?Sized + HasDrop> ValueRef<'a, V> {
         // This is safe because clone_into_raw_fn will not attempt to drop the value at the
         // destination.
         unsafe {
-            self.vtable.clone_into_raw_fn()(self.bytes.get_bytes_ref(), bytes.as_bytes_mut());
+            self.vtable.clone_into_raw_fn()(
+                self.bytes.get_bytes_ref(),
+                Bytes::as_bytes_mut(&mut bytes),
+            );
         }
         Value {
             bytes: ManuallyDrop::new(bytes),
@@ -717,7 +720,10 @@ impl<'a, V: ?Sized + HasDrop> ValueMut<'a, V> {
         // This is safe because clone_into_raw_fn will not attempt to drop the value at the
         // destination.
         unsafe {
-            self.vtable.clone_into_raw_fn()(self.bytes.get_bytes_ref(), bytes.as_bytes_mut());
+            self.vtable.clone_into_raw_fn()(
+                self.bytes.get_bytes_ref(),
+                Bytes::as_bytes_mut(&mut bytes),
+            );
         }
         Value {
             bytes: ManuallyDrop::new(bytes),

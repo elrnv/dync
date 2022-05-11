@@ -787,6 +787,11 @@ mod tests {
     type SliceAll<'a> = Slice<'a, AllTraitVTable>;
     type SliceMutAll<'a> = SliceMut<'a, AllTraitVTable>;
 
+    #[dync_trait(dync_crate_name = "crate")]
+    pub trait FloatTrait: Clone + PartialEq + std::fmt::Debug {}
+    impl<T> FloatTrait for T where T: Clone + PartialEq + std::fmt::Debug {}
+    type VecDynFloat = VecDyn<FloatTraitVTable>;
+
     #[inline]
     fn compute(x: i64, y: i64, z: i64) -> [i64; 3] {
         [x - 2 * y + z * 2, y - 2 * z + x * 2, z - 2 * x + y * 2]
@@ -1032,6 +1037,41 @@ mod tests {
             .collect();
         let buf = VecDynAll::from(vec.clone()); // Convert into buffer
         let nu_vec: Vec<Rc<i32>> = buf.into_vec().unwrap(); // Convert back into vec
+        assert_eq!(vec, nu_vec);
+    }
+
+    // Pushing to an empty buffer must be done carefully. This previously caused memory issues.
+    #[test]
+    fn f32x3_push_clone_from_empty() {
+        // When a VecDyn/VecCopy/VecVoid is created from a Vec<T>, it forfeits knowledge about
+        // allocation strategy. If items have already been allocated, we can expect further allocations
+        // to be in sizes at least multiple of the original item, however when an empty Vec<T> is
+        // converted, further allocations can create capacities that are not multiples of the original element
+        // size, which would cause problems. This test ensures there are no panics or undefined behaviour
+        // when converting empty vecs.
+
+        // Triplet of u32
+        let mut vec = vec![];
+        let mut buf = VecDynFloat::from(vec.clone()); // Convert into buffer
+        buf.push_cloned(ValueRef::new(&[2_u32; 3]));
+        vec.push([2; 3]);
+        let nu_vec: Vec<[u32; 3]> = buf.clone_into_vec().unwrap(); // Convert back into vec
+        assert_eq!(vec, nu_vec);
+
+        // Triplet of f64
+        let mut vec = vec![];
+        let mut buf = VecDynFloat::from(vec.clone()); // Convert into buffer
+        buf.push_cloned(ValueRef::new(&[2.0_f64; 3]));
+        vec.push([2.0; 3]);
+        let nu_vec: Vec<[f64; 3]> = buf.clone_into_vec().unwrap(); // Convert back into vec
+        assert_eq!(vec, nu_vec);
+
+        // With capacity
+        let mut vec = Vec::<[f64; 3]>::with_capacity(2);
+        let mut buf = VecDynFloat::from(vec.clone()); // Clone here can reset the capacity to 0
+        buf.push_cloned(ValueRef::new(&[2.0_f64; 3]));
+        vec.push([2.0; 3]);
+        let nu_vec: Vec<[f64; 3]> = buf.clone_into_vec().unwrap(); // Convert back into vec
         assert_eq!(vec, nu_vec);
     }
 
