@@ -5,4 +5,4 @@ cargo test 2>&1 | grep "Running.*target/debug/deps/.*" | sed 's/.*Running .*(\(.
 # https://github.com/rust-lang/rust/issues/68979
 # Test the code in the issue to see what valgrind reports and compare it to github actions.
 # Remove this line when the issue has been resolved.
-exit(0)
+exit 0
