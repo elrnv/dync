@@ -106,7 +106,7 @@ impl TraitMethod {
     }
     fn fn_type(&self) -> Ident {
         Ident::new(
-            &format!("{}Fn", self.name.to_camel_case()),
+            &format!("{}Fn", self.name.to_upper_camel_case()),
             Span::call_site(),
         )
     }
