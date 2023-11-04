@@ -324,7 +324,7 @@ impl VecVoid {
             }
         }
 
-        eval_align!(self.elem.alignment; rotate_left::<_>(self, n));
+        eval_align!(limited_stack, self.elem.alignment; rotate_left::<_>(self, n));
     }
 
     #[inline]
@@ -339,7 +339,7 @@ impl VecVoid {
             }
         }
 
-        eval_align!(self.elem.alignment; rotate_right::<_>(self, n));
+        eval_align!(limited_stack, self.elem.alignment; rotate_right::<_>(self, n));
     }
 
     /// Cast this vector into a `Vec<T>` where `T` is alignment sized.
@@ -403,6 +403,19 @@ impl Drop for VecVoid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rotate() {
+        let mut v = VecVoid::from_vec(vec![1u32, 2, 3]);
+        v.rotate_left(2);
+        unsafe {
+            assert_eq!(v.clone().into_vec_unchecked::<u32>(), vec![3, 1, 2]);
+        }
+        v.rotate_right(1);
+        unsafe {
+            assert_eq!(v.clone().into_vec_unchecked::<u32>(), vec![2, 3, 1]);
+        }
+    }
 
     #[test]
     fn clone_from() {

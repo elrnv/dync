@@ -11,7 +11,7 @@ macro_rules! generate_aligned_types {
     ($($t:ident($n:expr),)*) => {
 	$(
 	    #[derive(Copy, Clone, Debug, Default)]
-	    #[repr(align($n))]
+	    #[repr(C, align($n))]
 	    pub(crate) struct $t(u8);
 	)*
     }
@@ -52,6 +52,36 @@ generate_aligned_types!(
 
 #[macro_export]
 macro_rules! eval_align {
+    // To the best of my understanding:
+    // Some operations will fail because some std algorithms will rely on the
+    // stack, which may not be large enough to accomodate for large alignments.
+    // The program will panic when attempting to use types with very large alignments.
+    (limited_stack, $a:expr; $fn:ident ::<_ $(,$params:ident)*>($($args:expr),*) ) => {
+	match $a {
+	    1         => $fn::<T0, $($params,)*>($($args,)*),
+	    2         => $fn::<T1, $($params,)*>($($args,)*),
+	    4         => $fn::<T2, $($params,)*>($($args,)*),
+	    8         => $fn::<T3, $($params,)*>($($args,)*),
+	    16        => $fn::<T4, $($params,)*>($($args,)*),
+	    32        => $fn::<T5, $($params,)*>($($args,)*),
+	    64        => $fn::<T6, $($params,)*>($($args,)*),
+	    128       => $fn::<T7, $($params,)*>($($args,)*),
+	    256       => $fn::<T8, $($params,)*>($($args,)*),
+	    512       => $fn::<T9, $($params,)*>($($args,)*),
+	    1024      => $fn::<T10, $($params,)*>($($args,)*),
+	    2048      => $fn::<T11, $($params,)*>($($args,)*),
+	    4096      => $fn::<T12, $($params,)*>($($args,)*),
+	    8192      => $fn::<T13, $($params,)*>($($args,)*),
+	    16384     => $fn::<T14, $($params,)*>($($args,)*),
+	    32768     => $fn::<T15, $($params,)*>($($args,)*),
+	    65536     => $fn::<T16, $($params,)*>($($args,)*),
+	    131072    => $fn::<T17, $($params,)*>($($args,)*),
+	    262144    => $fn::<T18, $($params,)*>($($args,)*),
+	    a => unreachable!("Alignment is too large ({}) for vector manipulations", a)
+	}
+    };
+
+    // Other algorithms seem to work fine even with large alignments.
     ($a:expr; $fn:ident ::<_ $(,$params:ident)*>($($args:expr),*) ) => {
 	match $a {
 	    1         => $fn::<T0, $($params,)*>($($args,)*),
