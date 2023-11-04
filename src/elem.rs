@@ -72,11 +72,6 @@ macro_rules! eval_align {
 	    2048      => $fn::<T11, $($params,)*>($($args,)*),
 	    4096      => $fn::<T12, $($params,)*>($($args,)*),
 	    8192      => $fn::<T13, $($params,)*>($($args,)*),
-	    16384     => $fn::<T14, $($params,)*>($($args,)*),
-	    32768     => $fn::<T15, $($params,)*>($($args,)*),
-	    65536     => $fn::<T16, $($params,)*>($($args,)*),
-	    131072    => $fn::<T17, $($params,)*>($($args,)*),
-	    262144    => $fn::<T18, $($params,)*>($($args,)*),
 	    a => unreachable!("Alignment is too large ({}) for vector manipulations", a)
 	}
     };
