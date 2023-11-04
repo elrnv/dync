@@ -597,7 +597,7 @@ impl<'a, V: ?Sized> SliceCopyMut<'a, V> {
     #[inline]
     pub fn as_slice<T: Any>(&mut self) -> Option<&mut [T]> {
         let len = self.len();
-        let ptr = self.check::<T>()?.data.as_ptr() as *mut T;
+        let ptr = self.check::<T>()?.data.as_mut_ptr() as *mut T;
         Some(unsafe { slice::from_raw_parts_mut(ptr, len) })
     }
 
@@ -844,11 +844,22 @@ impl<'b, 'a: 'b, V: ?Sized> From<&'b SliceCopyMut<'a, V>> for SliceCopy<'b, V> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn iter_as() {
+        let mut vec = vec![1.0_f32, 23.0, 0.01, 42.0, 11.43];
+        let mut buf = SliceCopyMut::<()>::from(vec.as_mut_slice());
+        for val in buf.iter_as::<f32>().unwrap() {
+            *val += 1.0_f32;
+        }
+        assert_eq!(vec, vec![2.0_f32, 24.0, 1.01, 43.0, 12.43])
+    }
+
     /// Test dynamically sized vtables.
     #[cfg(feature = "traits")]
     #[test]
     fn dynamic_vtables() {
-        use super::*;
         use crate::into_dyn;
         use crate::VecCopy;
         let vec = vec![1u8, 100, 23];

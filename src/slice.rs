@@ -503,7 +503,7 @@ impl<'a, V: ?Sized + HasDrop> SliceMut<'a, V> {
     #[inline]
     pub fn as_slice<T: Any>(&mut self) -> Option<&mut [T]> {
         let len = self.len();
-        let ptr = self.check::<T>()?.data.data.as_ptr() as *mut T;
+        let ptr = self.check::<T>()?.data.data.as_mut_ptr() as *mut T;
         Some(unsafe { slice::from_raw_parts_mut(ptr, len) })
     }
 
