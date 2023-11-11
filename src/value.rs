@@ -324,7 +324,7 @@ impl<B: GetBytesMut + DropAsAligned, V: ?Sized + HasDrop> Drop for Value<B, V> {
     #[inline]
     fn drop(&mut self) {
         unsafe {
-            // This is safe since self will never be used after this call.
+            // SAFETY: Self will never be used after this call.
             self.vtable.drop_fn()(self.bytes.get_bytes_mut());
 
             // Manually drop what we promised.
@@ -340,11 +340,10 @@ impl<B: GetBytesMut + DropAsAligned, V: ?Sized + HasDrop + HasPartialEq> Partial
     /// This function panics if the types of the two operands don't match.
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        assert_eq!(
-            self.type_id, other.type_id,
-            "Comparing values of different types is forbidden"
-        );
-        // This is safe because we have just checked that the two types are the same.
+        if self.type_id != other.type_id {
+            return false;
+        }
+        // SAFETY: Checked that the two types are the same above.
         unsafe { self.vtable.eq_fn()(self.bytes.get_bytes_ref(), other.bytes.get_bytes_ref()) }
     }
 }
@@ -434,11 +433,10 @@ macro_rules! impl_value_ref_traits {
         impl<'a, V: ?Sized + HasPartialEq $( + $maybe_drop)*> PartialEq for $value_ref<'a, V> {
             #[inline]
             fn eq(&self, other: &Self) -> bool {
-                assert_eq!(
-                    self.type_id, other.type_id,
-                    "Comparing values of different types is forbidden"
-                );
-                // This is safe because we have just checked that the two types are the same.
+                if self.type_id != other.type_id {
+                    return false;
+                }
+                // SAFETY: Checked that the two types are the same above.
                 unsafe {
                     self.vtable.as_ref().eq_fn()(self.bytes.get_bytes_ref(), other.bytes.get_bytes_ref())
                 }
@@ -869,27 +867,43 @@ mod tests {
     impl<T> Float for T where T: Clone + PartialEq + std::fmt::Debug + 'static {}
 
     #[test]
-    #[should_panic]
-    fn forbidden_value_compare() {
+    fn compare_values_with_different_types() {
         let a = BoxValue::<ValVTable>::new(Rc::new("Hello"));
         let b = BoxValue::<ValVTable>::new(Rc::new(String::from("Hello")));
-        assert_eq!(a, b);
+        assert_ne!(a, b);
     }
 
     #[test]
-    #[should_panic]
-    fn forbidden_value_ref_compare() {
+    fn compare_value_ref_with_different_types() {
         let a = BoxValue::<ValVTable>::new(Rc::new("Hello"));
         let b = BoxValue::<ValVTable>::new(Rc::new(String::from("Hello")));
-        assert_eq!(a.as_ref(), b.as_ref());
+        assert_ne!(a.as_ref(), b.as_ref());
     }
 
     #[test]
-    #[should_panic]
-    fn forbidden_value_mut_compare() {
+    fn compare_value_mut_with_different_types() {
         let mut a = BoxValue::<ValVTable>::new(Rc::new("Hello"));
         let mut b = BoxValue::<ValVTable>::new(Rc::new(String::from("Hello")));
-        assert_eq!(a.as_mut(), b.as_mut());
+        assert_ne!(a.as_mut(), b.as_mut());
+    }
+
+    #[test]
+    fn values_with_different_types_in_a_hash_set() {
+        use std::collections::HashSet;
+        let mut set_a = HashSet::new();
+        let mut set_b = HashSet::new();
+        let a = BoxValue::<ValVTable>::new(Rc::new("Hello"));
+        let b = BoxValue::<ValVTable>::new(String::from("Hello"));
+        let c = BoxValue::<ValVTable>::new("Hello");
+        set_a.insert(a.clone());
+        set_a.insert(b);
+        set_b.insert(a.clone());
+        set_b.insert(c);
+        let set_intersect = set_a.intersection(&set_b).collect::<HashSet<_>>();
+
+        assert_eq!(set_intersect.len(), 1);
+        let elem = set_intersect.into_iter().next().unwrap();
+        assert_eq!(elem, &a);
     }
 
     #[test]
