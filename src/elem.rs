@@ -10,9 +10,15 @@ use std::{
 macro_rules! generate_aligned_types {
     ($($t:ident($n:expr),)*) => {
 	$(
-	    #[derive(Copy, Clone, Debug, Default)]
+	    #[derive(Copy, Clone, Debug)]
 	    #[repr(C, align($n))]
-	    pub(crate) struct $t(u8);
+	    pub(crate) struct $t([u8; $n]);
+
+        impl Default for $t {
+            fn default() -> Self {
+                $t([0_u8; $n])
+            }
+        }
 	)*
     }
 }
