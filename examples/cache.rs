@@ -21,6 +21,7 @@ fn main() {
     // This is quite tricky to do with trait objects. For instance, see the following post for how to
     // make a trait object work with the Eq trait (which is required for HashMap values):
     // https://stackoverflow.com/questions/25339603/how-to-test-for-equality-between-trait-objects
+    #[allow(dead_code)]
     #[dync_trait]
     trait HTValue: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug {}
     impl<T> HTValue for T where T: Clone + PartialEq + Eq + std::hash::Hash + std::fmt::Debug {}

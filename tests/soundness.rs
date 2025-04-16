@@ -11,5 +11,6 @@ fn alignment() {
     let mut x: VecCopy = VecCopy::with_type::<LargeAlign>();
     x.push_as::<LargeAlign>(LargeAlign(0));
 
-    let _ref_to_element = x.get_ref_as::<LargeAlign>(0).unwrap();
+    let ref_to_element = x.get_ref_as::<LargeAlign>(0).unwrap();
+    assert_eq!(ref_to_element.0, 0);
 }

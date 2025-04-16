@@ -8,9 +8,7 @@
 
 use std::mem::size_of;
 use std::mem::MaybeUninit;
-use std::rc::Rc;
 use std::slice;
-use std::sync::Arc;
 
 /// A trait defining a safe way to convert to and from byte pointers and slices.
 pub(crate) trait Bytes
@@ -101,32 +99,6 @@ where
     unsafe fn from_bytes(bytes: &[MaybeUninit<u8>]) -> &Self {
         assert_eq!(bytes.len(), size_of::<Self>());
         Self::from_byte_ptr(bytes.as_ptr())
-    }
-
-    #[inline]
-    fn rc_into_rc_bytes(rc: Rc<Self>) -> Rc<[MaybeUninit<u8>]> {
-        let byte_ptr = Rc::into_raw(rc) as *const MaybeUninit<u8>;
-        // This is safe since any memory can be represented by bytes and we are looking at
-        // sized types only.
-        unsafe { Rc::from_raw(slice::from_raw_parts(byte_ptr, size_of::<Self>())) }
-    }
-
-    #[inline]
-    unsafe fn rc_from_rc_bytes(rc: Rc<[MaybeUninit<u8>]>) -> Rc<Self> {
-        Rc::from_raw(Rc::into_raw(rc) as *const Self)
-    }
-
-    #[inline]
-    fn arc_into_arc_bytes(arc: Arc<Self>) -> Arc<[MaybeUninit<u8>]> {
-        let byte_ptr = Arc::into_raw(arc) as *const MaybeUninit<u8>;
-        // This is safe since any memory can be represented by bytes and we are looking at
-        // sized types only.
-        unsafe { Arc::from_raw(slice::from_raw_parts(byte_ptr, size_of::<Self>())) }
-    }
-
-    #[inline]
-    unsafe fn arc_from_arc_bytes(arc: Arc<[MaybeUninit<u8>]>) -> Arc<Self> {
-        Arc::from_raw(Arc::into_raw(arc) as *const Self)
     }
 
     #[inline]

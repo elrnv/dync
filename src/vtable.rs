@@ -40,8 +40,7 @@ where
 {
     Ref(&'a V),
     Box(Box<V>),
-    #[cfg(feature = "shared-vtables")]
-    Rc(Rc<V>),
+    //Rc(Rc<V>),
 }
 
 impl<'a, V: Clone + ?Sized> VTableRef<'a, V> {
@@ -50,8 +49,7 @@ impl<'a, V: Clone + ?Sized> VTableRef<'a, V> {
         match self {
             VTableRef::Ref(v) => v.clone(),
             VTableRef::Box(v) => *v,
-            #[cfg(feature = "shared-vtables")]
-            VTableRef::Rc(v) => Rc::try_unwrap(v).unwrap_or_else(|v| (*v).clone()),
+            //VTableRef::Rc(v) => Rc::try_unwrap(v).unwrap_or_else(|v| (*v).clone()),
         }
     }
 
@@ -60,8 +58,7 @@ impl<'a, V: Clone + ?Sized> VTableRef<'a, V> {
         match self {
             VTableRef::Ref(v) => Ptr::new(v.clone()),
             VTableRef::Box(v) => v,
-            #[cfg(feature = "shared-vtables")]
-            VTableRef::Rc(v) => Rc::clone(&v),
+            //VTableRef::Rc(v) => Rc::clone(&v),
         }
     }
 }
@@ -88,13 +85,12 @@ impl<'a, V: ?Sized> From<Box<V>> for VTableRef<'a, V> {
     }
 }
 
-#[cfg(feature = "shared-vtables")]
-impl<'a, V: ?Sized> From<Ptr<V>> for VTableRef<'a, V> {
-    #[inline]
-    fn from(v: Ptr<V>) -> VTableRef<'a, V> {
-        VTableRef::Rc(v)
-    }
-}
+// impl<'a, V: ?Sized> From<Ptr<V>> for VTableRef<'a, V> {
+//     #[inline]
+//     fn from(v: Ptr<V>) -> VTableRef<'a, V> {
+//         VTableRef::Rc(v)
+//     }
+// }
 
 impl<'a, V: ?Sized> AsRef<V> for VTableRef<'a, V> {
     #[inline]
@@ -102,8 +98,7 @@ impl<'a, V: ?Sized> AsRef<V> for VTableRef<'a, V> {
         match self {
             VTableRef::Ref(v) => v,
             VTableRef::Box(v) => &*v,
-            #[cfg(feature = "shared-vtables")]
-            VTableRef::Rc(v) => &*v,
+            // VTableRef::Rc(v) => &*v,
         }
     }
 }

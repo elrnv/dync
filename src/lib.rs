@@ -111,11 +111,10 @@ macro_rules! from_dyn {
                         let updated_vtable: Box<$vtable> = v.downcast().unwrap();
                         $slice::from_raw_parts(data, elem, updated_vtable)
                     }
-                    #[cfg(feature = "shared-vtables")]
-                    $crate::VTableRef::Rc(v) => {
-                        let updated_vtable: std::rc::Rc<$vtable> = v.downcast().unwrap();
-                        $slice::from_raw_parts(data, elem, updated_vtable)
-                    }
+                    // $crate::VTableRef::Rc(v) => {
+                    //     let updated_vtable: std::rc::Rc<$vtable> = v.downcast().unwrap();
+                    //     $slice::from_raw_parts(data, elem, updated_vtable)
+                    // }
                 }
             }
         }
@@ -172,11 +171,10 @@ macro_rules! into_dyn {
                         let updated_vtable: Box<dyn $trait> = v;
                         $slice::from_raw_parts(data, elem, updated_vtable)
                     }
-                    #[cfg(feature = "shared-vtables")]
-                    $crate::VTableRef::Rc(v) => {
-                        let updated_vtable: std::rc::Rc<dyn $trait> = v;
-                        $slice::from_raw_parts(data, elem, updated_vtable)
-                    }
+                    // $crate::VTableRef::Rc(v) => {
+                    //     let updated_vtable: std::rc::Rc<dyn $trait> = v;
+                    //     $slice::from_raw_parts(data, elem, updated_vtable)
+                    // }
                 }
             }
         }
