@@ -14,7 +14,7 @@ fn main() {
     use std::rc::Rc;
     use std::time::Instant;
 
-    use rand::distributions::Alphanumeric;
+    use rand::distr::Alphanumeric;
     use rand::prelude::*;
 
     // Define a trait for a value that can be stored in a HashTable.
@@ -32,7 +32,7 @@ fn main() {
     // A sample function to produce 3 large unsigned integer values given some small seed.
     fn costly_computation_int(seed: u8) -> [u128; 3] {
         let mut rng: StdRng = SeedableRng::from_seed([seed; 32]);
-        [rng.gen(), rng.gen(), rng.gen()]
+        [rng.random(), rng.random(), rng.random()]
     }
 
     // Another sample computation that produces random strings.
@@ -52,7 +52,7 @@ fn main() {
         let start_time = Instant::now();
         for _ in 0..50_000 {
             // Generate a random seed.
-            let seed = rng.gen::<u8>();
+            let seed = rng.random::<u8>();
 
             int_values.push_as(costly_computation_int(seed));
             str_values.push_as(costly_computation_str(seed));
@@ -72,7 +72,7 @@ fn main() {
         let start_time = Instant::now();
         for _ in 0..50_000 {
             // Generate a random seed.
-            let seed = rng.gen::<u8>();
+            let seed = rng.random::<u8>();
 
             let int_value = cache
                 .entry(seed)

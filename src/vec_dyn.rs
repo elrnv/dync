@@ -812,7 +812,7 @@ mod tests {
     #[inline]
     fn make_random_vec(n: usize) -> Vec<[i64; 3]> {
         let mut rng: StdRng = SeedableRng::from_seed([3; 32]);
-        let between = rand::distributions::Uniform::from(1i64..5);
+        let between = rand::distr::Uniform::new(1i64, 5).unwrap();
         (0..n).map(move |_| [between.sample(&mut rng); 3]).collect()
     }
 

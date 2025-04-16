@@ -291,7 +291,7 @@ mod tests {
         // Empty vec dropped
         let vd = VecDyn::<DropVTable>::with_type::<u32>();
         let v = vd.into_vec::<u32>().unwrap();
-        assert_eq!(v, Vec::new());
+        assert_eq!(v, Vec::<u32>::new());
 
         // Non-empty vec dropped
         let vd = VecDyn::<DropVTable>::from(vec![1u32, 2]);

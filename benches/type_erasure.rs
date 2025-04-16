@@ -15,7 +15,7 @@ impl<T> DynClone for T where T: Clone {}
 #[inline]
 fn make_random_vec(n: usize) -> Vec<[i64; 3]> {
     let mut rng: StdRng = SeedableRng::from_seed(SEED);
-    (0..n).map(move |_| [rng.gen::<i64>(); 3]).collect()
+    (0..n).map(move |_| [rng.random::<i64>(); 3]).collect()
 }
 
 #[inline]
@@ -31,7 +31,7 @@ fn make_random_vec_any(n: usize) -> Vec<Box<dyn Any>> {
     let mut rng: StdRng = SeedableRng::from_seed(SEED);
     (0..n)
         .map(move |_| {
-            let b: Box<dyn Any> = Box::new([rng.gen::<i64>(); 3]);
+            let b: Box<dyn Any> = Box::new([rng.random::<i64>(); 3]);
             b
         })
         .collect()
@@ -42,7 +42,7 @@ fn make_random_vec_arc_any(n: usize) -> Vec<Arc<dyn Any + Send + Sync>> {
     let mut rng: StdRng = SeedableRng::from_seed(SEED);
     (0..n)
         .map(move |_| {
-            let b: Arc<dyn Any + Send + Sync> = Arc::new([rng.gen::<i64>(); 3]);
+            let b: Arc<dyn Any + Send + Sync> = Arc::new([rng.random::<i64>(); 3]);
             b
         })
         .collect()
