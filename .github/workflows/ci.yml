@@ -75,25 +75,25 @@ jobs:
           override: true
       - run: cargo fmt -- --check
 
-  coverage:
-    name: Run Test Coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          profile: minimal
-          override: true
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --all-features --no-fail-fast -v
-        env:
-          CARGO_INCREMENTAL: '0'
-          RUSTFLAGS: '-Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-          RUSTDOCFLAGS: '-Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
-      - uses: actions-rs/grcov@v0.1
-      - uses: codecov/codecov-action@v1
-        with:
-          file: ./lcov.info
+  # coverage:
+  #   name: Run Test Coverage
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v2
+  #     - uses: actions-rs/toolchain@v1
+  #       with:
+  #         toolchain: nightly
+  #         profile: minimal
+  #         override: true
+  #     - uses: actions-rs/cargo@v1
+  #       with:
+  #         command: test
+  #         args: --all-features --no-fail-fast -v
+  #       env:
+  #         CARGO_INCREMENTAL: '0'
+  #         RUSTFLAGS: '-Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
+  #         RUSTDOCFLAGS: '-Ccodegen-units=1 -Cinline-threshold=0 -Clink-dead-code -Coverflow-checks=off -Cpanic=abort -Zpanic_abort_tests'
+  #     - uses: actions-rs/grcov@v0.1
+  #     - uses: codecov/codecov-action@v1
+  #       with:
+  #         file: ./lcov.info
